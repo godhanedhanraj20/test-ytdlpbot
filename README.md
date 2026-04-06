@@ -3,6 +3,16 @@
 A production-ready Telegram bot that downloads videos using `yt-dlp` and sends them back to the user.
 Powered by Pyrogram, supporting regular bot accounts (50MB limit via Bot API or 2GB via Pyrogram local API) or Premium Userbots (4GB limit).
 
+## Features & Architecture
+
+Built with stability and scalability in mind:
+- **Download Queue:** Prevents CPU/RAM exhaustion by limiting concurrent downloads using background asyncio workers.
+- **Anti-Spam Locks:** Enforces a per-user lock ensuring users cannot spam requests and crash the bot.
+- **Disk Space Protection:** Automatically verifies server storage before starting large downloads to prevent disk full errors.
+- **Robust Caching:** Uses a TTL-based URL and metadata cache, avoiding Telegram's 64-byte payload limit and preventing memory leaks.
+- **Live Progress Updates:** Hooked directly into `yt-dlp` to provide real-time feedback on download percentage and speed.
+- **Format Filtering:** intelligently groups and sorts available formats, keeping the UI clean and responsive.
+
 ## Requirements
 
 - Python 3.11.9
@@ -61,7 +71,7 @@ Once the bot is running, interacting with it is simple. Here is the step-by-step
 - **Next Step:** Tap on the button corresponding to your desired format.
 
 ### 4. Downloading and Uploading
-- **Action:** After clicking your desired format, the bot will begin downloading the video to its local storage. It will update the message to reflect its progress (`Downloading...`).
+- **Action:** After clicking your desired format, the bot will begin downloading the video to its local storage. It will update the message periodically to reflect its progress (`Downloading... Progress: 45% Speed: 2MiB/s`).
 - **Result:** Once the download is complete, the bot automatically uploads the file directly to your Telegram chat. After a successful upload, the bot deletes the local file to save space.
 
 ### Note on File Size Limits
