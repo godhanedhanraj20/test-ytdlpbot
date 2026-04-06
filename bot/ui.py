@@ -1,13 +1,18 @@
 import math
+import time
+import psutil
+import shutil
+
+START_TIME = time.time()
 
 def format_size(bytes_size: int) -> str:
     if not bytes_size or bytes_size == 0:
-        return "Unknown Size"
+        return "0B"
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if bytes_size < 1024:
-            return f"{bytes_size:.1f} {unit}"
+            return f"{bytes_size:.2f}{unit}"
         bytes_size /= 1024
-    return f"{bytes_size:.1f} PB"
+    return f"{bytes_size:.2f}PB"
 
 def format_time(seconds: int) -> str:
     if not seconds:
@@ -24,7 +29,7 @@ def format_time(seconds: int) -> str:
     if secs > 0 or not parts:
         parts.append(f"{secs}s")
 
-    return " ".join(parts)
+    return "".join(parts)
 
 def make_progress_bar(percent_val: float, width: int = 10) -> str:
     filled = int(round(percent_val / 100 * width))
@@ -33,7 +38,25 @@ def make_progress_bar(percent_val: float, width: int = 10) -> str:
     elif filled < 0:
         filled = 0
     empty = width - filled
-    return "█" * filled + "░" * empty
+    return "✦" * filled + "✧" * empty
+
+def get_sys_stats() -> dict:
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory().percent
+
+    total, used, free = shutil.disk_usage("/")
+    free_str = format_size(free)
+    disk_percent = (used / total) * 100
+
+    uptime = time.time() - START_TIME
+
+    return {
+        "cpu": cpu,
+        "ram": ram,
+        "free_disk": free_str,
+        "disk_percent": disk_percent,
+        "uptime": format_time(uptime)
+    }
 
 def get_preview_message(title: str, duration: int) -> str:
     duration_str = format_time(duration) if duration else "Unknown"
@@ -43,39 +66,47 @@ def get_preview_message(title: str, duration: int) -> str:
         "Select a format to download:"
     )
 
-def get_download_progress_message(percent: float, speed: str, downloaded: int, total: int, eta: int) -> str:
+def get_detailed_message(
+    title: str,
+    status: str,
+    percent: float,
+    processed: int,
+    total: int,
+    speed: str,
+    eta: int,
+    elapsed: int,
+    user_name: str,
+    user_id: int
+) -> str:
     bar = make_progress_bar(percent)
-    dl_str = format_size(downloaded) if downloaded else "?"
+    processed_str = format_size(processed)
     total_str = format_size(total) if total else "?"
-    eta_str = format_time(eta) if eta is not None else "Unknown"
 
+    stats = get_sys_stats()
+
+    msg = f"**{title}**\n"
+    msg += f"┃ 〖{bar}〗 {percent:.2f}%\n"
+    if status == "Queued":
+        msg += f"┠ Status: ⏳ Queued | Pos: {processed}\n"
+    else:
+        msg += f"┠ Processed: {processed_str} of {total_str}\n"
+        status_emoji = "📥 Download" if status == "Downloading" else "📤 Upload"
+        msg += f"┠ Status: {status_emoji} | ETA: {format_time(eta)}\n"
+        msg += f"┠ Speed: {speed} | Elapsed: {format_time(elapsed)}\n"
+
+    msg += f"┠ Engine: YT-DLP | Pyrogram\n"
+    msg += f"┠ User: {user_name} | ID: {user_id}\n"
+    msg += f"┖ /cancel\n\n"
+
+    msg += f"⌬ Bot Stats\n"
+    msg += f"┠ CPU: {stats['cpu']}% | F: {stats['free_disk']} [{stats['disk_percent']:.1f}%]\n"
+    msg += f"┖ RAM: {stats['ram']}% | UPTIME: {stats['uptime']}"
+
+    return msg
+
+def get_completion_summary(total_time: int, file_size: int, title: str) -> str:
     return (
-        f"📥 **Downloading...**\n\n"
-        f"{bar} {percent:.1f}%\n\n"
-        f"⚡ Speed: {speed}\n"
-        f"📦 {dl_str} / {total_str}\n"
-        f"⏱ ETA: {eta_str}"
-    )
-
-def get_upload_progress_message(percent: float, speed_bytes: float) -> str:
-    bar = make_progress_bar(percent)
-    speed_str = format_size(int(speed_bytes)) + "/s" if speed_bytes else "0 B/s"
-
-    return (
-        f"📤 **Uploading...**\n\n"
-        f"{bar} {percent:.1f}%\n\n"
-        f"⚡ Speed: {speed_str}"
-    )
-
-def get_queued_message(position: int) -> str:
-    return (
-        f"⏳ **Added to queue**\n"
-        f"Position: #{position}"
-    )
-
-def get_completion_summary(total_time: int, file_size: int) -> str:
-    return (
-        f"✅ **Download complete**\n\n"
+        f"✅ **{title} downloaded**\n\n"
         f"⏱ Total time: {format_time(total_time)}\n"
         f"📦 Size: {format_size(file_size)}"
     )
@@ -85,3 +116,12 @@ def get_error_message(reason: str) -> str:
         f"❌ **Download failed**\n"
         f"Reason: {reason}"
     )
+
+def get_download_progress_message(*args, **kwargs):
+    pass # Replaced by detailed message
+
+def get_upload_progress_message(*args, **kwargs):
+    pass # Replaced by detailed message
+
+def get_queued_message(*args, **kwargs):
+    pass # Replaced by detailed message

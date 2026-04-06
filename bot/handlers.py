@@ -9,8 +9,7 @@ from pyrogram.errors import MessageNotModified
 
 from bot.ui import (
     format_size, format_time, make_progress_bar, get_preview_message,
-    get_download_progress_message, get_upload_progress_message,
-    get_queued_message, get_completion_summary, get_error_message
+    get_detailed_message, get_completion_summary, get_error_message
 )
 
 
@@ -204,7 +203,7 @@ def register_handlers(app: Client):
                 recommended = " ⭐" if f_type == 'video' and i == 0 else ""
                 btn_text = f"{emoji} {f['quality']} {f['ext'].upper()} – {f['size_str']}{recommended}"
 
-                short_id = await store_format_data(text, f['format_id'], size_bytes)
+                short_id = await store_format_data(text, f['format_id'], size_bytes, title)
                 callback_data = f"dl_{short_id}"
 
                 row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
@@ -338,6 +337,8 @@ def register_handlers(app: Client):
         try:
             start_time = time.time()
             file_path = None
+            user_name = callback_query.from_user.first_name or "User"
+            title = format_data.get("title", "Unknown Video")
 
             while True:
                 if await is_cancel_requested(user_id):
@@ -360,16 +361,17 @@ def register_handlers(app: Client):
                     else:
                         raise Exception("Unknown worker state.")
 
-                # If job is queued, get queue position
+                elapsed = int(time.time() - start_time)
+
                 if status == status.queued:
                     try:
-                        # get queue size
                         redis = await get_arq_pool()
-                        # arq does not have a direct method to get queue position of a specific job easily.
-                        # we can just show "Queued" or use total queued jobs.
                         queued = len(await redis.queued_jobs())
+                        msg_text = get_detailed_message(
+                            title, "Queued", 0.0, queued, 0, "N/A", 0, elapsed, user_name, user_id
+                        )
                         await callback_query.edit_message_text(
-                            text=get_queued_message(queued),
+                            text=msg_text,
                             reply_markup=InlineKeyboardMarkup([[
                                 InlineKeyboardButton("🔄 Refresh", callback_data="refresh_job"),
                                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_job")
@@ -377,7 +379,7 @@ def register_handlers(app: Client):
                         )
                     except MessageNotModified:
                         pass
-                    except Exception as e:
+                    except Exception:
                         pass
                 else:
                     progress_data = await get_progress(job.job_id)
@@ -388,12 +390,17 @@ def register_handlers(app: Client):
                         except:
                             percent = 0.0
 
-                        msg_text = get_download_progress_message(
+                        msg_text = get_detailed_message(
+                            title,
+                            "Downloading",
                             percent,
-                            progress_data.get('speed', 'N/A'),
                             progress_data.get('downloaded', 0),
                             progress_data.get('total', 0),
-                            progress_data.get('eta', 0)
+                            progress_data.get('speed', 'N/A'),
+                            progress_data.get('eta', 0),
+                            elapsed,
+                            user_name,
+                            user_id
                         )
                         try:
                             await callback_query.edit_message_text(
@@ -411,8 +418,18 @@ def register_handlers(app: Client):
 
             logger.info(f"Upload starting for user {user_id}.")
             await set_job_status(job.job_id, user_id, "uploading")
+
+            try:
+                file_size = os.path.getsize(file_path)
+            except:
+                file_size = 0
+
+            elapsed = int(time.time() - start_time)
+            msg_text = get_detailed_message(
+                title, "Uploading", 0.0, 0, file_size, "N/A", 0, elapsed, user_name, user_id
+            )
             await callback_query.edit_message_text(
-                text=get_upload_progress_message(0.0, 0.0),
+                text=msg_text,
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("❌ Cancel", callback_data="cancel_job")
                 ]])
@@ -433,8 +450,14 @@ def register_handlers(app: Client):
                     last_current[0] = current
 
                     percent = (current / total * 100) if total else 0.0
+                    eta = int((total - current) / speed_bytes) if speed_bytes > 0 else 0
+                    speed_str = format_size(speed_bytes) + '/s'
+                    elapsed_upload = int(now - start_time)
 
-                    msg_text = get_upload_progress_message(percent, speed_bytes)
+                    msg_text = get_detailed_message(
+                        title, "Uploading", percent, current, total, speed_str, eta, elapsed_upload, user_name, user_id
+                    )
+
                     try:
                         await callback_query.edit_message_text(
                             text=msg_text,
@@ -446,12 +469,6 @@ def register_handlers(app: Client):
                         pass
                     except Exception:
                         pass
-
-            # Warn user if size is large before sending
-            try:
-                file_size = os.path.getsize(file_path)
-            except:
-                file_size = 0
 
             if file_size > 1024 * 1024 * 1024:
                 try:
@@ -466,7 +483,7 @@ def register_handlers(app: Client):
                 client.send_document(
                     chat_id=callback_query.message.chat.id,
                     document=file_path,
-                    caption="🎬 Here is your video!",
+                    caption=f"🎬 **{title}**",
                     progress=upload_progress
                 ),
                 timeout=600
@@ -474,7 +491,7 @@ def register_handlers(app: Client):
 
             logger.info(f"Upload completed for user {user_id}.")
             total_time = int(time.time() - start_time)
-            await callback_query.edit_message_text(text=get_completion_summary(total_time, file_size))
+            await callback_query.edit_message_text(text=get_completion_summary(total_time, file_size, title))
 
         except asyncio.TimeoutError:
             logger.error(f"Upload timed out (10 min limit) for user {user_id}.")

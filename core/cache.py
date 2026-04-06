@@ -9,12 +9,13 @@ STATUS_TTL = 3600 # 1 hour
 def generate_short_id() -> str:
     return uuid.uuid4().hex[:8]
 
-async def store_format_data(url: str, format_id: str, size_bytes: int) -> str:
+async def store_format_data(url: str, format_id: str, size_bytes: int, title: str = 'Unknown Title') -> str:
     short_id = generate_short_id()
     data = {
         "url": url,
         "format_id": format_id,
         "size_bytes": size_bytes,
+        "title": title,
         "timestamp": time.time()
     }
     await redis_client.setex(f"format:{short_id}", CACHE_TTL, json.dumps(data))
