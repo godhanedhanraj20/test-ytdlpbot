@@ -8,10 +8,10 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.errors import MessageNotModified
 
-from services.downloader import extract_video_info, download_video, filter_formats, CancelledError
-from core.cache import store_format_data, get_format_data
+from services.downloader import extract_video_info, filter_formats
+from core.cache import store_format_data, get_format_data, get_progress
 from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested
-from core.queue import download_queue
+from core.queue import get_arq_pool
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,6 @@ def check_disk_space() -> bool:
 
 def make_progress_bar(percent_str: str) -> str:
     try:
-        # percent_str usually looks like " 45.2%" or "45%"
         p = float(percent_str.replace('%', '').strip())
         filled = int(p / 10)
         bar = '█' * filled + '░' * (10 - filled)
@@ -72,7 +71,7 @@ def register_handlers(app: Client):
     @app.on_message(filters.command("cancel"))
     async def cancel_command(client: Client, message: Message):
         user_id = message.from_user.id
-        if request_cancel(user_id):
+        if await request_cancel(user_id):
             await message.reply_text("🛑 Cancellation requested. Your active download/upload will stop shortly.")
         else:
             await message.reply_text("❌ You don't have any active downloads to cancel.")
@@ -93,10 +92,8 @@ def register_handlers(app: Client):
 
         try:
             info = await extract_video_info(text)
-
             title = info.get('title', 'Unknown Title')
             formats = info.get('formats', [])
-
             filtered_formats = filter_formats(formats)
 
             if not filtered_formats:
@@ -110,24 +107,20 @@ def register_handlers(app: Client):
                 size_bytes = f['size_bytes']
                 f_type = f.get('type', 'video')
 
-                # Smart UI Emoji
                 emoji = "🎥" if f_type == 'video' else "🎵"
                 btn_text = f"{emoji} {f['quality']} {f['ext'].upper()} – {f['size_str']}"
 
-                short_id = store_format_data(text, format_id, size_bytes)
+                short_id = await store_format_data(text, format_id, size_bytes)
                 callback_data = f"dl_{short_id}"
 
                 row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
-
                 if len(row) == 2:
                     keyboard.append(row)
                     row = []
-
             if row:
                 keyboard.append(row)
 
             reply_markup = InlineKeyboardMarkup(keyboard)
-
             await processing_msg.edit_text(
                 f"🎬 **{title}**\n\nSelect a format to download:",
                 reply_markup=reply_markup
@@ -142,15 +135,14 @@ def register_handlers(app: Client):
     @app.on_callback_query(filters.regex(r"^dl_"))
     async def button_callback(client: Client, callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
-        data = callback_query.data
-        parts = data.split("_")
+        parts = callback_query.data.split("_")
 
         if len(parts) < 2:
             await callback_query.answer("Invalid request.", show_alert=True)
             return
 
         short_id = parts[1]
-        format_data = get_format_data(short_id)
+        format_data = await get_format_data(short_id)
 
         if not format_data:
             await callback_query.edit_message_text(text="❌ Session expired. Please send the link again.")
@@ -167,94 +159,111 @@ def register_handlers(app: Client):
         if size_bytes > 2 * 1024 * 1024 * 1024:
             await callback_query.answer("⚠️ File is over 2GB. Requires Premium Userbot.", show_alert=False)
 
-        if not acquire_lock(user_id):
+        if not await acquire_lock(user_id):
             await callback_query.answer("⚠️ You already have a download in progress. Please wait.", show_alert=True)
             return
 
         if not check_disk_space():
-            release_lock(user_id)
+            await release_lock(user_id)
             await callback_query.answer("⚠️ Server disk space is low. Please try again later.", show_alert=True)
             return
 
-        await callback_query.edit_message_text(text="⏳ Queued for download... Please wait.")
+        await callback_query.edit_message_text(text="⏳ Enqueueing download...")
 
-        async def process_task():
-            file_path = None
-            try:
-                if is_cancel_requested(user_id):
-                    raise CancelledError("Cancelled before start.")
+        # Enqueue job to ARQ
+        redis_pool = await get_arq_pool()
+        job = await redis_pool.enqueue_job('download_task', url, format_id, user_id)
 
-                await callback_query.edit_message_text(text="📥 Downloading video...\n\n[░░░░░░░░░░] 0%")
+        if not job:
+            await release_lock(user_id)
+            await callback_query.edit_message_text(text="❌ Failed to enqueue task. Please try again.")
+            return
 
-                async def download_progress_hook(percent: str, speed: str):
+        # Poll progress from Redis while job is running
+        file_path = None
+        try:
+            while True:
+                if await is_cancel_requested(user_id):
+                    # We flag it, worker will eventually throw CancelledError
+                    await callback_query.edit_message_text(text="🛑 Cancellation requested. Waiting for worker to stop...")
+                    # Allow loop to continue to receive the cancelled status from ARQ
+
+                status = await job.status()
+                if status == status.complete:
+                    result = await job.result()
+                    if result['status'] == 'success':
+                        file_path = result['file_path']
+                        break
+                    elif result['status'] == 'cancelled':
+                        await callback_query.edit_message_text(text="🛑 Task cancelled by user.")
+                        await release_lock(user_id)
+                        return
+                    else:
+                        raise Exception(result.get('error_message', 'Unknown Error'))
+
+                # If still running, fetch progress
+                progress_data = await get_progress(job.job_id)
+                if progress_data and not await is_cancel_requested(user_id):
+                    bar = make_progress_bar(progress_data['percent'])
                     try:
-                        bar = make_progress_bar(percent)
-                        await callback_query.edit_message_text(f"📥 Downloading video...\n\n{bar}\nSpeed: {speed}")
+                        await callback_query.edit_message_text(f"📥 Downloading video...\n\n{bar}\nSpeed: {progress_data['speed']}")
                     except MessageNotModified:
                         pass
-                    except Exception as e:
+                    except Exception:
                         pass
 
-                file_path = await download_video(url, format_id, user_id, download_progress_hook)
+                await asyncio.sleep(3)
 
-                if is_cancel_requested(user_id):
-                    raise CancelledError("Cancelled after download.")
+            # Job finished successfully, upload to telegram
+            await callback_query.edit_message_text(text="⬆️ Uploading to Telegram...\n\n[░░░░░░░░░░] 0%")
 
-                await callback_query.edit_message_text(text="⬆️ Uploading to Telegram...\n\n[░░░░░░░░░░] 0%")
+            last_update_time = [time.time()]
+            last_current = [0]
 
-                # Upload progress state
-                last_update_time = [time.time()]
-                last_current = [0]
+            async def upload_progress(current, total):
+                if await is_cancel_requested(user_id):
+                    client.stop_transmission()
 
-                async def upload_progress(current, total):
-                    if is_cancel_requested(user_id):
-                        client.stop_transmission()
+                now = time.time()
+                if now - last_update_time[0] > 3:
+                    speed_bytes = (current - last_current[0]) / (now - last_update_time[0])
+                    last_update_time[0] = now
+                    last_current[0] = current
 
-                    now = time.time()
-                    if now - last_update_time[0] > 3:
-                        speed_bytes = (current - last_current[0]) / (now - last_update_time[0])
-                        last_update_time[0] = now
-                        last_current[0] = current
+                    speed_str = format_speed(speed_bytes)
+                    bar = make_upload_progress_bar(current, total)
 
-                        speed_str = format_speed(speed_bytes)
-                        bar = make_upload_progress_bar(current, total)
-
-                        try:
-                            await callback_query.edit_message_text(
-                                f"⬆️ Uploading to Telegram...\n\n{bar}\nSpeed: {speed_str}"
-                            )
-                        except MessageNotModified:
-                            pass
-                        except Exception:
-                            pass
-
-                await client.send_document(
-                    chat_id=callback_query.message.chat.id,
-                    document=file_path,
-                    caption="Here is your video!",
-                    progress=upload_progress
-                )
-
-                await callback_query.edit_message_text(text="✅ Finished!")
-
-            except CancelledError:
-                await callback_query.edit_message_text(text="🛑 Task cancelled by user.")
-            except Exception as e:
-                # Catch Pyrogram StopTransmission thrown by stop_transmission()
-                if "StopTransmission" in str(e) or "User requested cancellation" in str(e):
-                    await callback_query.edit_message_text(text="🛑 Task cancelled by user.")
-                else:
-                    logger.error(f"Error downloading/uploading: {e}", exc_info=True)
-                    await client.send_message(
-                        chat_id=callback_query.message.chat.id,
-                        text=f"❌ Failed to process video. Error: {str(e)}"
-                    )
-            finally:
-                if file_path and os.path.exists(file_path):
                     try:
-                        os.remove(file_path)
-                    except Exception as cleanup_error:
-                        logger.error(f"Failed to delete {file_path}: {cleanup_error}")
-                release_lock(user_id)
+                        await callback_query.edit_message_text(
+                            f"⬆️ Uploading to Telegram...\n\n{bar}\nSpeed: {speed_str}"
+                        )
+                    except MessageNotModified:
+                        pass
+                    except Exception:
+                        pass
 
-        await download_queue.put(process_task)
+            await client.send_document(
+                chat_id=callback_query.message.chat.id,
+                document=file_path,
+                caption="Here is your video!",
+                progress=upload_progress
+            )
+
+            await callback_query.edit_message_text(text="✅ Finished!")
+
+        except Exception as e:
+            if "StopTransmission" in str(e) or "User requested cancellation" in str(e) or "cancelled" in str(e).lower():
+                await callback_query.edit_message_text(text="🛑 Task cancelled by user.")
+            else:
+                logger.error(f"Error downloading/uploading: {e}", exc_info=True)
+                await client.send_message(
+                    chat_id=callback_query.message.chat.id,
+                    text=f"❌ Failed to process video. Error: {str(e)}"
+                )
+        finally:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to delete {file_path}: {cleanup_error}")
+            await release_lock(user_id)

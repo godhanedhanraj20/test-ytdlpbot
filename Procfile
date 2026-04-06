@@ -1,1 +1,2 @@
-worker: python -m bot.main
+bot: python -m bot.main
+worker: arq core.worker.WorkerSettings

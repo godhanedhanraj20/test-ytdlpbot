@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: video-bot-redis
+    ports:
+      - "6379:6379"
+
+  bot:
+    build: .
+    container_name: video-bot
+    depends_on:
+      - redis
+    environment:
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - SESSION_STRING=${SESSION_STRING}
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - downloads_data:/app/downloads
+
+  worker:
+    build: .
+    container_name: video-worker
+    command: arq core.worker.WorkerSettings
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - downloads_data:/app/downloads
+
+volumes:
+  downloads_data:

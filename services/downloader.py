@@ -30,7 +30,7 @@ async def extract_video_info(url: str) -> Dict[str, Any]:
     except Exception as e:
         raise ValueError(f"Failed to extract info: {str(e)}")
 
-def _download_video_sync(url: str, format_id: str, user_id: int, progress_callback=None) -> str:
+def _download_video_sync(url: str, format_id: str, user_id: int, loop: asyncio.AbstractEventLoop, progress_callback=None) -> str:
     unique_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOAD_DIR, f'%(title)s_{unique_id}.%(ext)s')
 
@@ -44,8 +44,18 @@ def _download_video_sync(url: str, format_id: str, user_id: int, progress_callba
 
     if progress_callback:
         def hook(d):
-            if is_cancel_requested(user_id):
-                raise CancelledError("User requested cancellation.")
+            # Check cancel state securely from async context
+            # By passing task safely
+            future = asyncio.run_coroutine_threadsafe(is_cancel_requested(user_id), loop)
+            try:
+                # blocks thread slightly, but ok for yt-dlp hook
+                cancel_requested = future.result(timeout=2)
+                if cancel_requested:
+                    raise CancelledError("User requested cancellation.")
+            except CancelledError:
+                raise
+            except Exception:
+                pass
 
             if d['status'] == 'downloading':
                 percent = d.get('_percent_str', '0%')
@@ -67,23 +77,22 @@ def _download_video_sync(url: str, format_id: str, user_id: int, progress_callba
         except CancelledError:
             raise
         except Exception as e:
-            # yt-dlp might wrap our CancelledError in DownloadError, so we check string representation
             if "User requested cancellation" in str(e):
                 raise CancelledError("User requested cancellation.")
             raise e
 
 async def download_video(url: str, format_id: str, user_id: int, progress_message_func=None) -> str:
     last_update_time = [time.time()]
+    loop = asyncio.get_running_loop()
 
     def sync_progress_callback(percent: str, speed: str):
         if not progress_message_func:
             return
 
         current_time = time.time()
-        # Update every 3 seconds to avoid spamming Telegram API
+        # Update every 3 seconds
         if current_time - last_update_time[0] > 3:
             last_update_time[0] = current_time
-            loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(
                 progress_message_func(percent, speed),
                 loop
@@ -91,7 +100,7 @@ async def download_video(url: str, format_id: str, user_id: int, progress_messag
 
     try:
         file_path = await asyncio.wait_for(
-            asyncio.to_thread(_download_video_sync, url, format_id, user_id, sync_progress_callback),
+            asyncio.to_thread(_download_video_sync, url, format_id, user_id, loop, sync_progress_callback),
             timeout=900
         )
         if not file_path or not os.path.exists(file_path):
