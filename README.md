@@ -5,12 +5,14 @@ Powered by Pyrogram, supporting regular bot accounts (50MB limit via Bot API or 
 
 ## Features & Architecture
 
-Built with stability and scalability in mind:
+Built with stability, scalability, and UX in mind:
+- **Smart Format UI:** Categorizes available download options with clear emojis (🎥 Video, 🎵 Audio), resolutions, formats, and estimated file sizes for easy selection.
+- **Live Progress Bars:** Displays visual ASCII progress bars (`[██████....] 65%`) and calculated transfer speeds directly in Telegram during both download and upload phases.
+- **Graceful Cancellation:** Supports a `/cancel` command to abort any active download or upload operation instantly, saving server bandwidth and user time.
 - **Download Queue:** Prevents CPU/RAM exhaustion by limiting concurrent downloads using background asyncio workers.
 - **Anti-Spam Locks:** Enforces a per-user lock ensuring users cannot spam requests and crash the bot.
 - **Disk Space Protection:** Automatically verifies server storage before starting large downloads to prevent disk full errors.
 - **Robust Caching:** Uses a TTL-based URL and metadata cache, avoiding Telegram's 64-byte payload limit and preventing memory leaks.
-- **Live Progress Updates:** Hooked directly into `yt-dlp` to provide real-time feedback on download percentage and speed.
 - **Format Filtering:** intelligently groups and sorts available formats, keeping the UI clean and responsive.
 
 ## Requirements
@@ -67,12 +69,16 @@ Once the bot is running, interacting with it is simple. Here is the step-by-step
 
 ### 3. Format Selection
 - **Action:** Once you send the link, the bot will parse the URL and extract the available formats without downloading the video.
-- **Result:** You will receive an **Inline Keyboard Menu** containing the available qualities (e.g., 1080p, 720p, Audio only), file formats (.mp4, .webm), and estimated file sizes.
+- **Result:** You will receive a clean **Inline Keyboard Menu** containing the available qualities (e.g., `🎥 1080p MP4 – 45MB`, `🎵 MP3 Audio – 5MB`).
 - **Next Step:** Tap on the button corresponding to your desired format.
 
 ### 4. Downloading and Uploading
-- **Action:** After clicking your desired format, the bot will begin downloading the video to its local storage. It will update the message periodically to reflect its progress (`Downloading... Progress: 45% Speed: 2MiB/s`).
-- **Result:** Once the download is complete, the bot automatically uploads the file directly to your Telegram chat. After a successful upload, the bot deletes the local file to save space.
+- **Action:** After clicking your desired format, the bot will begin downloading the video to its local storage, displaying a live progress bar.
+- **Result:** Once the download is complete, the bot automatically uploads the file directly to your Telegram chat, again showing an upload progress bar. After a successful upload, the bot deletes the local file to save space.
+
+### 5. Cancelling a Download
+- **Command:** `/cancel`
+- **Action:** If you selected the wrong format or changed your mind, simply send `/cancel`. The bot will safely stop the active download or upload process and free up the queue.
 
 ### Note on File Size Limits
 - **Regular Bot (Bot Token):** Can upload files up to 2GB using Pyrogram.
