@@ -10,7 +10,9 @@ Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (u
 
 - 🔒 **Private Mode:** Lock the bot down so only you (and people you `/adduser`) can use it.
 - 🚀 **Queue System (ARQ):** Downloads happen in the background. The bot never freezes!
-- 📊 **Beautiful Live UI:** Watch the download/upload speeds in real-time, see queue positions, and view ETA and sizes.
+- 📊 **Beautiful Live UI:** Watch the download/upload speeds in real-time, see queue positions, view ETA, and monitor live Bot Server Stats (CPU/RAM).
+- 🛡️ **Anti-Bot Bypass:** Uses advanced `yt-dlp` settings to bypass YouTube's "Sign in to confirm you're not a bot" checks without requiring cookies.
+- 🔄 **Intelligent Fallbacks:** Automatically retries downloads using safe fallback formats if the preferred quality fails or encounters HTTP 403 errors.
 - 🎨 **Smart UI:** Video formats are sorted cleanly (e.g., `🎥 1080p`) with clear `🔊` (Audio) and `🔇` (Mute) indicators.
 - 🖼 **Video Previews:** Get thumbnail previews and duration before selecting the video format to download.
 - 🛑 **Cancel Anytime:** Made a mistake? Just click the inline ❌ Cancel button to stop your active download instantly.
