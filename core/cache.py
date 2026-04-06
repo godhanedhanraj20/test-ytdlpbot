@@ -26,8 +26,8 @@ async def get_format_data(short_id: str) -> dict:
         return json.loads(raw_data)
     return None
 
-async def set_progress(job_id: str, percent: str, speed: str):
-    data = {"percent": percent, "speed": speed, "timestamp": time.time()}
+async def set_progress(job_id: str, percent: str, speed: str, downloaded: int = 0, total: int = 0, eta: int = 0):
+    data = {"percent": percent, "speed": speed, "downloaded": downloaded, "total": total, "eta": eta, "timestamp": time.time()}
     await redis_client.setex(f"progress:{job_id}", STATUS_TTL, json.dumps(data))
 
 async def get_progress(job_id: str) -> dict:

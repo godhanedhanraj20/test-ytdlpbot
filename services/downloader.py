@@ -76,7 +76,13 @@ def _download_video_sync(url: str, format_id: str, user_id: int, loop: asyncio.A
                     pass
 
                 speed = d.get('_speed_str', 'N/A')
-                progress_callback(d.get('_percent_str', '0%'), speed)
+
+                downloaded = d.get('downloaded_bytes', 0)
+                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                eta = d.get('eta', 0)
+
+                progress_callback(d.get('_percent_str', '0%'), speed, downloaded, total, eta)
+
         ydl_opts['progress_hooks'] = [hook]
 
     with YoutubeDL(ydl_opts) as ydl:
@@ -101,14 +107,14 @@ async def download_video(url: str, format_id: str, user_id: int, progress_messag
     last_update_time = [time.time()]
     loop = asyncio.get_running_loop()
 
-    def sync_progress_callback(percent: str, speed: str):
+    def sync_progress_callback(percent: str, speed: str, downloaded: int, total: int, eta: int):
         if not progress_message_func:
             return
 
         current_time = time.time()
         if current_time - last_update_time[0] > 3:
             last_update_time[0] = current_time
-            progress_message_func(percent, speed)
+            progress_message_func(percent, speed, downloaded, total, eta)
 
     try:
         logger.info(f"Starting download for user {user_id} with format {format_id}")

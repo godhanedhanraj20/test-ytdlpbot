@@ -10,9 +10,10 @@ Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (u
 
 - 🔒 **Private Mode:** Lock the bot down so only you (and people you `/adduser`) can use it.
 - 🚀 **Queue System (ARQ):** Downloads happen in the background. The bot never freezes!
-- 📊 **Live Progress Bars:** Watch the download and upload speeds in real-time.
+- 📊 **Beautiful Live UI:** Watch the download/upload speeds in real-time, see queue positions, and view ETA and sizes.
 - 🎨 **Smart UI:** Video formats are sorted cleanly (e.g., `🎥 1080p`) with clear `🔊` (Audio) and `🔇` (Mute) indicators.
-- 🛑 **Cancel Anytime:** Made a mistake? Just type `/cancel` to stop your active download.
+- 🖼 **Video Previews:** Get thumbnail previews and duration before selecting the video format to download.
+- 🛑 **Cancel Anytime:** Made a mistake? Just click the inline ❌ Cancel button to stop your active download instantly.
 - 🚦 **Anti-Spam & Limits:** Built-in rate limiting and disk-space checks keep your server safe.
 
 ---

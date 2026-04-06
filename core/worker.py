@@ -21,14 +21,14 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
     logger.info(f"Worker started job {job_id} for user {user_id}")
     await set_job_status(job_id, user_id, "downloading")
 
-    def progress_callback(percent: str, speed: str):
+    def progress_callback(percent: str, speed: str, downloaded: int, total: int, eta: int):
         try:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = asyncio.get_event_loop()
             asyncio.run_coroutine_threadsafe(
-                set_progress(job_id, percent, speed),
+                set_progress(job_id, percent, speed, downloaded, total, eta),
                 loop
             )
         except Exception as e:

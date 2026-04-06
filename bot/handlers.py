@@ -7,6 +7,13 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.errors import MessageNotModified
 
+from bot.ui import (
+    format_size, format_time, make_progress_bar, get_preview_message,
+    get_download_progress_message, get_upload_progress_message,
+    get_queued_message, get_completion_summary, get_error_message
+)
+
+
 from services.downloader import extract_video_info, filter_formats
 from core.cache import store_format_data, get_format_data, get_progress, set_job_status, cleanup_job_data
 from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit
@@ -43,7 +50,7 @@ def make_progress_bar(percent_str: str) -> str:
     except:
         return "[░░░░░░░░░░] 0%"
 
-def make_upload_progress_bar(current: int, total: int) -> str:
+def make_progress_bar(current: int, total: int) -> str:
     if total == 0:
         return "[░░░░░░░░░░] 0%"
     p = (current / total) * 100
@@ -51,7 +58,7 @@ def make_upload_progress_bar(current: int, total: int) -> str:
     bar = '█' * filled + '░' * (10 - filled)
     return f"[{bar}] {p:.1f}%"
 
-def format_speed(speed_bytes: float) -> str:
+def _removed_format_speed(speed_bytes: float) -> str:
     for unit in ['B/s', 'KB/s', 'MB/s', 'GB/s']:
         if speed_bytes < 1024.0:
             return f"{speed_bytes:.1f} {unit}"
@@ -177,25 +184,27 @@ def register_handlers(app: Client):
 
         try:
             info = await extract_video_info(text)
-            title = info.get('title', 'Unknown Title')
-            formats = info.get('formats', [])
-            filtered_formats = filter_formats(formats)
+            filtered_formats = filter_formats(info.get('formats', []))
 
             if not filtered_formats:
-                await processing_msg.edit_text("❌ No supported formats found for this video.")
+                await processing_msg.edit_text("❌ No suitable formats found.")
                 return
+
+            title = info.get('title', 'Unknown Title')
+            duration = info.get('duration', 0)
 
             keyboard = []
             row = []
-            for f in filtered_formats:
-                format_id = f['format_id']
+            for i, f in enumerate(filtered_formats):
                 size_bytes = f['size_bytes']
                 f_type = f.get('type', 'video')
-
                 emoji = "🎥" if f_type == 'video' else "🎵"
-                btn_text = f"{emoji} {f['quality']} {f['ext'].upper()} – {f['size_str']}"
 
-                short_id = await store_format_data(text, format_id, size_bytes)
+                # Highlight best video format (usually the first one since it's sorted by resolution)
+                recommended = " ⭐" if f_type == 'video' and i == 0 else ""
+                btn_text = f"{emoji} {f['quality']} {f['ext'].upper()} – {f['size_str']}{recommended}"
+
+                short_id = await store_format_data(text, f['format_id'], size_bytes)
                 callback_data = f"dl_{short_id}"
 
                 row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
@@ -205,10 +214,15 @@ def register_handlers(app: Client):
             if row:
                 keyboard.append(row)
 
+            # Add Cancel button
+            keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_selection")])
+
             reply_markup = InlineKeyboardMarkup(keyboard)
             logger.info(f"Successfully extracted {len(filtered_formats)} formats for user {user_id}.")
+
+            preview_text = get_preview_message(title, duration)
             await processing_msg.edit_text(
-                f"🎬 **{title}**\n\nSelect a format to download:",
+                preview_text,
                 reply_markup=reply_markup
             )
 
@@ -218,6 +232,23 @@ def register_handlers(app: Client):
         except Exception as e:
             logger.error(f"Error extracting video for user {user_id}: {e}", exc_info=True)
             await processing_msg.edit_text("❌ An unexpected error occurred while processing the URL.")
+
+
+
+    @app.on_callback_query(filters.regex(r"^cancel_job$"))
+    async def cancel_job_callback(client: Client, callback_query: CallbackQuery):
+        user_id = callback_query.from_user.id
+        from core.limits import request_cancel
+        await request_cancel(user_id)
+        await callback_query.answer("🛑 Cancellation requested...", show_alert=True)
+
+    @app.on_callback_query(filters.regex(r"^refresh_job$"))
+    async def refresh_job_callback(client: Client, callback_query: CallbackQuery):
+        await callback_query.answer("🔄 Refreshing status...")
+
+    @app.on_callback_query(filters.regex(r"^cancel_selection$"))
+    async def cancel_selection_callback(client: Client, callback_query: CallbackQuery):
+        await callback_query.edit_message_text("❌ Operation cancelled.")
 
     @app.on_callback_query(filters.regex(r"^dl_"))
     async def button_callback(client: Client, callback_query: CallbackQuery):
@@ -305,6 +336,9 @@ def register_handlers(app: Client):
 
         file_path = None
         try:
+            start_time = time.time()
+            file_path = None
+
             while True:
                 if await is_cancel_requested(user_id):
                     await callback_query.edit_message_text(text="🛑 Cancellation requested. Waiting for worker to stop...")
@@ -321,26 +355,68 @@ def register_handlers(app: Client):
                     elif result['status'] == 'error':
                         error_msg = result.get('message', 'Unknown Error')
                         logger.warning(f"Worker returned structured error for user {user_id}: {error_msg}")
-                        await callback_query.edit_message_text(text=f"❌ Download Failed:\n{error_msg}")
+                        await callback_query.edit_message_text(text=get_error_message(error_msg))
                         return
                     else:
                         raise Exception("Unknown worker state.")
 
-                progress_data = await get_progress(job.job_id)
-                if progress_data and not await is_cancel_requested(user_id):
-                    bar = make_progress_bar(progress_data['percent'])
+                # If job is queued, get queue position
+                if status == status.queued:
                     try:
-                        await callback_query.edit_message_text(f"📥 Downloading video...\n\n{bar}\nSpeed: {progress_data['speed']}")
+                        # get queue size
+                        redis = await get_arq_pool()
+                        # arq does not have a direct method to get queue position of a specific job easily.
+                        # we can just show "Queued" or use total queued jobs.
+                        queued = len(await redis.queued_jobs())
+                        await callback_query.edit_message_text(
+                            text=get_queued_message(queued),
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton("🔄 Refresh", callback_data="refresh_job"),
+                                InlineKeyboardButton("❌ Cancel", callback_data="cancel_job")
+                            ]])
+                        )
                     except MessageNotModified:
                         pass
-                    except Exception:
+                    except Exception as e:
                         pass
+                else:
+                    progress_data = await get_progress(job.job_id)
+                    if progress_data and not await is_cancel_requested(user_id):
+                        try:
+                            percent_str = progress_data['percent'].replace('%', '').strip()
+                            percent = float(percent_str) if percent_str else 0.0
+                        except:
+                            percent = 0.0
+
+                        msg_text = get_download_progress_message(
+                            percent,
+                            progress_data.get('speed', 'N/A'),
+                            progress_data.get('downloaded', 0),
+                            progress_data.get('total', 0),
+                            progress_data.get('eta', 0)
+                        )
+                        try:
+                            await callback_query.edit_message_text(
+                                msg_text,
+                                reply_markup=InlineKeyboardMarkup([[
+                                    InlineKeyboardButton("❌ Cancel", callback_data="cancel_job")
+                                ]])
+                            )
+                        except MessageNotModified:
+                            pass
+                        except Exception:
+                            pass
 
                 await asyncio.sleep(3)
 
             logger.info(f"Upload starting for user {user_id}.")
             await set_job_status(job.job_id, user_id, "uploading")
-            await callback_query.edit_message_text(text="⬆️ Uploading to Telegram...\n\n[░░░░░░░░░░] 0%")
+            await callback_query.edit_message_text(
+                text=get_upload_progress_message(0.0, 0.0),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("❌ Cancel", callback_data="cancel_job")
+                ]])
+            )
 
             last_update_time = [time.time()]
             last_current = [0]
@@ -356,30 +432,49 @@ def register_handlers(app: Client):
                     last_update_time[0] = now
                     last_current[0] = current
 
-                    speed_str = format_speed(speed_bytes)
-                    bar = make_upload_progress_bar(current, total)
+                    percent = (current / total * 100) if total else 0.0
 
+                    msg_text = get_upload_progress_message(percent, speed_bytes)
                     try:
                         await callback_query.edit_message_text(
-                            f"⬆️ Uploading to Telegram...\n\n{bar}\nSpeed: {speed_str}"
+                            text=msg_text,
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton("❌ Cancel", callback_data="cancel_job")
+                            ]])
                         )
                     except MessageNotModified:
                         pass
                     except Exception:
                         pass
 
+            # Warn user if size is large before sending
+            try:
+                file_size = os.path.getsize(file_path)
+            except:
+                file_size = 0
+
+            if file_size > 1024 * 1024 * 1024:
+                try:
+                    await client.send_message(
+                        chat_id=callback_query.message.chat.id,
+                        text="⚠️ File is larger than 1GB. Upload may take a while!"
+                    )
+                except:
+                    pass
+
             await asyncio.wait_for(
                 client.send_document(
                     chat_id=callback_query.message.chat.id,
                     document=file_path,
-                    caption="Here is your video!",
+                    caption="🎬 Here is your video!",
                     progress=upload_progress
                 ),
                 timeout=600
             )
 
             logger.info(f"Upload completed for user {user_id}.")
-            await callback_query.edit_message_text(text="✅ Finished!")
+            total_time = int(time.time() - start_time)
+            await callback_query.edit_message_text(text=get_completion_summary(total_time, file_size))
 
         except asyncio.TimeoutError:
             logger.error(f"Upload timed out (10 min limit) for user {user_id}.")
