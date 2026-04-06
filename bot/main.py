@@ -4,6 +4,8 @@ import logging
 import asyncio
 from pyrogram import Client
 import bot.handlers
+from core.redis import redis_client
+from redis.exceptions import ConnectionError
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -18,6 +20,21 @@ async def run_bot():
 
     if not api_id or not api_hash:
         logger.error("API_ID and API_HASH environment variables are required.")
+        sys.exit(1)
+
+    # Health check: Ensure Redis is accessible before starting the bot
+    try:
+        logger.info("Checking Redis connection...")
+        await redis_client.ping()
+        logger.info("Redis connection successful!")
+    except ConnectionError as e:
+        logger.fatal(
+            "CRITICAL: Could not connect to Redis!\n"
+            "The bot requires a running Redis server to function.\n"
+            f"Current REDIS_URL: {os.environ.get('REDIS_URL', 'redis://localhost:6379/0')}\n"
+            "Please ensure Redis is running or check your REDIS_URL config.\n"
+            f"Detailed error: {e}"
+        )
         sys.exit(1)
 
     if session_string:
