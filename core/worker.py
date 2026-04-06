@@ -1,25 +1,23 @@
 import asyncio
-import logging
 import os
 from arq.connections import RedisSettings
 from services.downloader import download_video, CancelledError
 from core.queue import REDIS_URL
-from core.cache import set_progress
+from core.cache import set_progress, set_job_status
+from core.logger import setup_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("worker")
+logger = setup_logger("worker", "WORKER")
 
 async def download_task(ctx, url: str, format_id: str, user_id: int):
     """
     ARQ Background Task to download the video using yt-dlp.
-    It writes progress to Redis so the Bot process can read it.
+    Includes retry logic, structured error handling, and Redis job status tracking.
     """
     job_id = ctx['job_id']
     logger.info(f"Worker started job {job_id} for user {user_id}")
+    await set_job_status(job_id, user_id, "downloading")
 
-    # Synchronous progress hook adapted for Redis storage via async queue
     def progress_callback(percent: str, speed: str):
-        # We must fire and forget the async redis write from sync context
         try:
             loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(
@@ -27,18 +25,43 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
                 loop
             )
         except Exception as e:
-            logger.error(f"Failed to set progress: {e}")
+            logger.error(f"Failed to set progress for job {job_id}: {e}")
 
-    try:
-        file_path = await download_video(url, format_id, user_id, progress_message_func=progress_callback)
-        logger.info(f"Worker completed job {job_id}. File: {file_path}")
-        return {"status": "success", "file_path": file_path}
-    except CancelledError:
-        logger.info(f"Worker cancelled job {job_id} for user {user_id}")
-        return {"status": "cancelled"}
-    except Exception as e:
-        logger.error(f"Worker failed job {job_id}: {e}", exc_info=True)
-        return {"status": "error", "error_message": str(e)}
+    max_retries = 2
+    retry_delay = 3
+
+    for attempt in range(max_retries + 1):
+        try:
+            file_path = await download_video(url, format_id, user_id, progress_message_func=progress_callback)
+            logger.info(f"Worker successfully completed job {job_id}. File: {file_path}")
+            await set_job_status(job_id, user_id, "completed")
+            return {"status": "success", "file_path": file_path}
+
+        except CancelledError:
+            logger.info(f"Worker cancelled job {job_id} for user {user_id}")
+            await set_job_status(job_id, user_id, "failed")
+            return {"status": "cancelled", "error_type": "CancelledError", "message": "Task cancelled by user."}
+
+        except Exception as e:
+            error_str = str(e)
+            logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed for job {job_id}: {error_str}")
+
+            # Check if it's a retryable network or temporary yt-dlp error
+            # Simple heuristic: if 'HTTP' or 'timed out' or 'network' in error string
+            is_retryable = any(kw in error_str.lower() for kw in ['http', 'time', 'network', 'connection', 'unavailable'])
+
+            if attempt < max_retries and is_retryable:
+                logger.info(f"Retrying job {job_id} in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                continue
+
+            logger.error(f"Worker failed job {job_id} permanently: {error_str}", exc_info=True)
+            await set_job_status(job_id, user_id, "failed")
+            return {
+                "status": "error",
+                "error_type": "DownloadError",
+                "message": f"Failed to download video: {error_str}"
+            }
 
 # Parse REDIS_URL for ARQ worker settings
 host = "localhost"
@@ -71,7 +94,6 @@ if REDIS_URL.startswith("redis://"):
     except Exception:
         pass
 
-# Settings class for ARQ CLI
 class WorkerSettings:
     functions = [download_task]
     redis_settings = RedisSettings(host=host, port=port, database=database, password=password)

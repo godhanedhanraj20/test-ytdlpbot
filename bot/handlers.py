@@ -1,6 +1,5 @@
 import os
 import re
-import logging
 import asyncio
 import shutil
 import time
@@ -9,12 +8,13 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, 
 from pyrogram.errors import MessageNotModified
 
 from services.downloader import extract_video_info, filter_formats
-from core.cache import store_format_data, get_format_data, get_progress
-from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested
+from core.cache import store_format_data, get_format_data, get_progress, set_job_status, cleanup_job_data
+from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit
 from core.queue import get_arq_pool
 from core.auth import is_user_allowed, add_allowed_user, ADMIN_USER_ID
+from core.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger("handlers", "BOT")
 
 URL_REGEX = re.compile(
     r'^(?:http|ftp)s?://'
@@ -81,7 +81,6 @@ def register_handlers(app: Client):
     async def adduser_command(client: Client, message: Message):
         user_id = message.from_user.id
 
-        # Security: Only ADMIN_USER_ID can use this command
         if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
             return
 
@@ -106,6 +105,7 @@ def register_handlers(app: Client):
             return
 
         if await request_cancel(user_id):
+            logger.info(f"User {user_id} requested cancellation.")
             await message.reply_text("🛑 Cancellation requested. Your active download/upload will stop shortly.")
         else:
             await message.reply_text("❌ You don't have any active downloads to cancel.")
@@ -123,7 +123,15 @@ def register_handlers(app: Client):
             await message.reply_text("❌ Please send a valid HTTP/HTTPS URL.")
             return
 
+        logger.info(f"User {user_id} requested URL: {text}")
+
+        if not await check_rate_limit(user_id):
+            logger.warning(f"User {user_id} hit rate limit.")
+            await message.reply_text("⚠️ You reached the hourly limit (5 per 15 min). Try again later.")
+            return
+
         if not check_disk_space():
+            logger.error("Server disk space is low.")
             await message.reply_text("⚠️ Server disk space is low. Please try again later.")
             return
 
@@ -160,15 +168,17 @@ def register_handlers(app: Client):
                 keyboard.append(row)
 
             reply_markup = InlineKeyboardMarkup(keyboard)
+            logger.info(f"Successfully extracted {len(filtered_formats)} formats for user {user_id}.")
             await processing_msg.edit_text(
                 f"🎬 **{title}**\n\nSelect a format to download:",
                 reply_markup=reply_markup
             )
 
         except ValueError as e:
+            logger.warning(f"Extraction failed for user {user_id}: {e}")
             await processing_msg.edit_text(f"❌ Could not extract video info.\n\nError: {e}")
         except Exception as e:
-            logger.error(f"Error handling message: {e}", exc_info=True)
+            logger.error(f"Error extracting video for user {user_id}: {e}", exc_info=True)
             await processing_msg.edit_text("❌ An unexpected error occurred while processing the URL.")
 
     @app.on_callback_query(filters.regex(r"^dl_"))
@@ -213,17 +223,19 @@ def register_handlers(app: Client):
             return
 
         await callback_query.edit_message_text(text="⏳ Enqueueing download...")
+        logger.info(f"User {user_id} enqueuing download for format {format_id}.")
 
-        # Enqueue job to ARQ
         redis_pool = await get_arq_pool()
         job = await redis_pool.enqueue_job('download_task', url, format_id, user_id)
 
         if not job:
             await release_lock(user_id)
+            logger.error(f"Failed to enqueue task for user {user_id}.")
             await callback_query.edit_message_text(text="❌ Failed to enqueue task. Please try again.")
             return
 
-        # Poll progress from Redis while job is running
+        await set_job_status(job.job_id, user_id, "queued")
+
         file_path = None
         try:
             while True:
@@ -238,12 +250,15 @@ def register_handlers(app: Client):
                         break
                     elif result['status'] == 'cancelled':
                         await callback_query.edit_message_text(text="🛑 Task cancelled by user.")
-                        await release_lock(user_id)
+                        return
+                    elif result['status'] == 'error':
+                        error_msg = result.get('message', 'Unknown Error')
+                        logger.warning(f"Worker returned structured error for user {user_id}: {error_msg}")
+                        await callback_query.edit_message_text(text=f"❌ Download Failed:\n{error_msg}")
                         return
                     else:
-                        raise Exception(result.get('error_message', 'Unknown Error'))
+                        raise Exception("Unknown worker state.")
 
-                # If still running, fetch progress
                 progress_data = await get_progress(job.job_id)
                 if progress_data and not await is_cancel_requested(user_id):
                     bar = make_progress_bar(progress_data['percent'])
@@ -256,7 +271,8 @@ def register_handlers(app: Client):
 
                 await asyncio.sleep(3)
 
-            # Job finished successfully, upload to telegram
+            logger.info(f"Upload starting for user {user_id}.")
+            await set_job_status(job.job_id, user_id, "uploading")
             await callback_query.edit_message_text(text="⬆️ Uploading to Telegram...\n\n[░░░░░░░░░░] 0%")
 
             last_update_time = [time.time()]
@@ -264,6 +280,7 @@ def register_handlers(app: Client):
 
             async def upload_progress(current, total):
                 if await is_cancel_requested(user_id):
+                    logger.info(f"User {user_id} cancelled upload.")
                     client.stop_transmission()
 
                 now = time.time()
@@ -284,28 +301,42 @@ def register_handlers(app: Client):
                     except Exception:
                         pass
 
-            await client.send_document(
-                chat_id=callback_query.message.chat.id,
-                document=file_path,
-                caption="Here is your video!",
-                progress=upload_progress
+            # Wrap upload in a strict 10 minute timeout
+            await asyncio.wait_for(
+                client.send_document(
+                    chat_id=callback_query.message.chat.id,
+                    document=file_path,
+                    caption="Here is your video!",
+                    progress=upload_progress
+                ),
+                timeout=600
             )
 
+            logger.info(f"Upload completed for user {user_id}.")
             await callback_query.edit_message_text(text="✅ Finished!")
 
+        except asyncio.TimeoutError:
+            logger.error(f"Upload timed out (10 min limit) for user {user_id}.")
+            await callback_query.edit_message_text(text="❌ Upload timed out. Please try a smaller format.")
         except Exception as e:
             if "StopTransmission" in str(e) or "User requested cancellation" in str(e) or "cancelled" in str(e).lower():
                 await callback_query.edit_message_text(text="🛑 Task cancelled by user.")
             else:
-                logger.error(f"Error downloading/uploading: {e}", exc_info=True)
+                logger.error(f"Error handling job for user {user_id}: {e}", exc_info=True)
                 await client.send_message(
                     chat_id=callback_query.message.chat.id,
-                    text=f"❌ Failed to process video. Error: {str(e)}"
+                    text="❌ Failed to process video due to an unexpected error."
                 )
         finally:
             if file_path and os.path.exists(file_path):
                 try:
                     os.remove(file_path)
+                    logger.info(f"Cleaned up file {file_path}")
                 except Exception as cleanup_error:
                     logger.error(f"Failed to delete {file_path}: {cleanup_error}")
+
+            # Clean up redis tracking state
+            if 'job' in locals() and job:
+                await cleanup_job_data(job.job_id)
+
             await release_lock(user_id)
