@@ -25,31 +25,29 @@ Built with stability, scalability, and UX in mind:
 
 You can deploy the bot using Docker (Recommended for VPS) or natively (Heroku).
 
-### 1. VPS Deployment (Docker Compose - Recommended)
+### 1. Configure Environment Variables
 
-Create a `.env` file in the project root:
+First, rename the provided template:
 ```bash
-API_ID=your_api_id
-API_HASH=your_api_hash
-TELEGRAM_BOT_TOKEN=your_bot_token
-# SESSION_STRING=your_session_string
+cp sample.config.env config.env
 ```
+Then open `config.env` and fill in your details (API ID, Hash, Token, etc.).
 
-Run using Docker Compose:
+### 2. VPS Deployment (Docker Compose - Recommended)
+
+Once `config.env` is configured, run using Docker Compose:
 ```bash
 docker-compose up -d --build
 ```
-This will spin up the `redis`, `bot`, and `worker` containers, sharing the `/downloads` folder automatically.
+This will spin up the `redis`, `bot`, and `worker` containers, passing your environment variables and sharing the `/downloads` folder automatically.
 
-### 2. Native / Heroku Deployment
+### 3. Native / Heroku Deployment
 
 If you prefer native execution:
-1. Ensure Redis is running and set `REDIS_URL` in your environment (default: `redis://localhost:6379/0`).
-2. Set API keys:
+1. Ensure Redis is running locally or remotely.
+2. Load your environment variables from your terminal:
    ```bash
-   export API_ID="your-api-id"
-   export API_HASH="your-api-hash"
-   export TELEGRAM_BOT_TOKEN="your-bot-token"
+   export $(grep -v '^#' config.env | xargs)
    ```
 3. Run the Bot and Worker in separate terminals:
    ```bash
@@ -57,7 +55,7 @@ If you prefer native execution:
    arq core.worker.WorkerSettings
    ```
 
-For **Heroku**, a `Procfile` is provided. Simply provision a Heroku Redis add-on, set config vars, and scale both dynos:
+For **Heroku**, a `Procfile` is provided. Simply provision a Heroku Redis add-on, manually copy the config values from your `config.env` into the Heroku Dashboard Config Vars, and scale both dynos:
 ```bash
 heroku ps:scale bot=1 worker=1
 ```

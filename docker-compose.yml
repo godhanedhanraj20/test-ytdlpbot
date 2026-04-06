@@ -12,12 +12,8 @@ services:
     container_name: video-bot
     depends_on:
       - redis
-    environment:
-      - API_ID=${API_ID}
-      - API_HASH=${API_HASH}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - SESSION_STRING=${SESSION_STRING}
-      - REDIS_URL=redis://redis:6379/0
+    env_file:
+      - config.env
     volumes:
       - downloads_data:/app/downloads
 
@@ -27,8 +23,8 @@ services:
     command: arq core.worker.WorkerSettings
     depends_on:
       - redis
-    environment:
-      - REDIS_URL=redis://redis:6379/0
+    env_file:
+      - config.env
     volumes:
       - downloads_data:/app/downloads
 
