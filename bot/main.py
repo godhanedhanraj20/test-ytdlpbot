@@ -27,7 +27,7 @@ async def run_bot():
         logger.info("Checking Redis connection...")
         await redis_client.ping()
         logger.info("Redis connection successful!")
-    except ConnectionError as e:
+    except Exception as e:
         logger.fatal(
             "CRITICAL: Could not connect to Redis!\n"
             "The bot requires a running Redis server to function.\n"
@@ -35,7 +35,7 @@ async def run_bot():
             "Please ensure Redis is running or check your REDIS_URL config.\n"
             f"Detailed error: {e}"
         )
-        sys.exit(1)
+        sys.exit(1) # Gracefully exit here!
 
     if session_string:
         logger.info("Starting Pyrogram with SESSION_STRING (Userbot Mode)")
@@ -70,7 +70,13 @@ async def run_bot():
         await app.stop()
 
 def main():
-    asyncio.run(run_bot())
+    try:
+        asyncio.run(run_bot())
+    except SystemExit:
+        # Expected exit on sys.exit(1)
+        pass
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
     main()

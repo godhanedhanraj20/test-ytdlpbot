@@ -28,8 +28,11 @@ REQUIRED_FREE_SPACE = 10 * 1024 * 1024 * 1024
 MAX_ALLOWED_SIZE = 4 * 1024 * 1024 * 1024
 
 def check_disk_space() -> bool:
-    total, used, free = shutil.disk_usage("/")
-    return free > REQUIRED_FREE_SPACE
+    try:
+        total, used, free = shutil.disk_usage("/")
+        return free > REQUIRED_FREE_SPACE
+    except Exception:
+        return True # Fallback if permission denied
 
 def make_progress_bar(percent_str: str) -> str:
     try:
@@ -59,8 +62,14 @@ def register_handlers(app: Client):
     @app.on_message(filters.command("start"))
     async def start_command(client: Client, message: Message):
         user_id = message.from_user.id
-        if not await is_user_allowed(user_id):
-            await message.reply_text("🚫 You are not allowed to use this bot.")
+        try:
+            allowed = await is_user_allowed(user_id)
+            if not allowed:
+                await message.reply_text("🚫 You are not allowed to use this bot.")
+                return
+        except Exception as e:
+            logger.error(f"Redis error checking whitelist for {user_id}: {e}")
+            await message.reply_text("❌ A database connection error occurred. Please contact the administrator.")
             return
 
         welcome_msg = (
@@ -97,24 +106,36 @@ def register_handlers(app: Client):
                 await message.reply_text(f"ℹ️ User `{target_id}` is already in the whitelist.")
         except ValueError:
             await message.reply_text("❌ Invalid Telegram ID. It must be an integer.")
+        except Exception as e:
+            logger.error(f"Redis error adding user {target_id}: {e}")
+            await message.reply_text("❌ Database error occurred while adding user.")
 
     @app.on_message(filters.command("cancel"))
     async def cancel_command(client: Client, message: Message):
         user_id = message.from_user.id
-        if not await is_user_allowed(user_id):
-            return
+        try:
+            if not await is_user_allowed(user_id):
+                return
 
-        if await request_cancel(user_id):
-            logger.info(f"User {user_id} requested cancellation.")
-            await message.reply_text("🛑 Cancellation requested. Your active download/upload will stop shortly.")
-        else:
-            await message.reply_text("❌ You don't have any active downloads to cancel.")
+            if await request_cancel(user_id):
+                logger.info(f"User {user_id} requested cancellation.")
+                await message.reply_text("🛑 Cancellation requested. Your active download/upload will stop shortly.")
+            else:
+                await message.reply_text("❌ You don't have any active downloads to cancel.")
+        except Exception as e:
+            logger.error(f"Redis error during cancel for {user_id}: {e}")
+            await message.reply_text("❌ Database error. Could not process cancellation.")
 
     @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser"]))
     async def handle_message(client: Client, message: Message):
         user_id = message.from_user.id
-        if not await is_user_allowed(user_id):
-            await message.reply_text("🚫 You are not allowed to use this bot.")
+        try:
+            if not await is_user_allowed(user_id):
+                await message.reply_text("🚫 You are not allowed to use this bot.")
+                return
+        except Exception as e:
+            logger.error(f"Redis error checking whitelist for {user_id}: {e}")
+            await message.reply_text("❌ A database connection error occurred.")
             return
 
         text = message.text
@@ -125,9 +146,14 @@ def register_handlers(app: Client):
 
         logger.info(f"User {user_id} requested URL: {text}")
 
-        if not await check_rate_limit(user_id):
-            logger.warning(f"User {user_id} hit rate limit.")
-            await message.reply_text("⚠️ You reached the hourly limit (5 per 15 min). Try again later.")
+        try:
+            if not await check_rate_limit(user_id):
+                logger.warning(f"User {user_id} hit rate limit.")
+                await message.reply_text("⚠️ You reached the hourly limit (5 per 15 min). Try again later.")
+                return
+        except Exception as e:
+            logger.error(f"Redis error checking rate limit for {user_id}: {e}")
+            await message.reply_text("❌ A database connection error occurred.")
             return
 
         if not check_disk_space():
@@ -185,8 +211,13 @@ def register_handlers(app: Client):
     async def button_callback(client: Client, callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
 
-        if not await is_user_allowed(user_id):
-            await callback_query.answer("🚫 You are not allowed to use this bot.", show_alert=True)
+        try:
+            if not await is_user_allowed(user_id):
+                await callback_query.answer("🚫 You are not allowed to use this bot.", show_alert=True)
+                return
+        except Exception as e:
+            logger.error(f"Redis error checking whitelist: {e}")
+            await callback_query.answer("❌ Database connection error.", show_alert=True)
             return
 
         parts = callback_query.data.split("_")
@@ -196,7 +227,13 @@ def register_handlers(app: Client):
             return
 
         short_id = parts[1]
-        format_data = await get_format_data(short_id)
+
+        try:
+            format_data = await get_format_data(short_id)
+        except Exception as e:
+            logger.error(f"Redis error getting format data: {e}")
+            await callback_query.answer("❌ Database error retrieving format data.", show_alert=True)
+            return
 
         if not format_data:
             await callback_query.edit_message_text(text="❌ Session expired. Please send the link again.")
@@ -213,28 +250,45 @@ def register_handlers(app: Client):
         if size_bytes > 2 * 1024 * 1024 * 1024:
             await callback_query.answer("⚠️ File is over 2GB. Requires Premium Userbot.", show_alert=False)
 
-        if not await acquire_lock(user_id):
-            await callback_query.answer("⚠️ You already have a download in progress. Please wait.", show_alert=True)
+        try:
+            if not await acquire_lock(user_id):
+                await callback_query.answer("⚠️ You already have a download in progress. Please wait.", show_alert=True)
+                return
+        except Exception as e:
+            logger.error(f"Redis error acquiring lock: {e}")
+            await callback_query.answer("❌ Database error acquiring lock.", show_alert=True)
             return
 
         if not check_disk_space():
-            await release_lock(user_id)
+            try:
+                await release_lock(user_id)
+            except:
+                pass
             await callback_query.answer("⚠️ Server disk space is low. Please try again later.", show_alert=True)
             return
 
         await callback_query.edit_message_text(text="⏳ Enqueueing download...")
         logger.info(f"User {user_id} enqueuing download for format {format_id}.")
 
-        redis_pool = await get_arq_pool()
-        job = await redis_pool.enqueue_job('download_task', url, format_id, user_id)
+        try:
+            redis_pool = await get_arq_pool()
+            job = await redis_pool.enqueue_job('download_task', url, format_id, user_id)
 
-        if not job:
-            await release_lock(user_id)
-            logger.error(f"Failed to enqueue task for user {user_id}.")
-            await callback_query.edit_message_text(text="❌ Failed to enqueue task. Please try again.")
+            if not job:
+                await release_lock(user_id)
+                logger.error(f"Failed to enqueue task for user {user_id}.")
+                await callback_query.edit_message_text(text="❌ Failed to enqueue task. Please try again.")
+                return
+
+            await set_job_status(job.job_id, user_id, "queued")
+        except Exception as e:
+            logger.error(f"Redis ARQ Error during enqueue: {e}")
+            try:
+                await release_lock(user_id)
+            except:
+                pass
+            await callback_query.edit_message_text(text="❌ Failed to connect to background queue. Ensure Redis is running.")
             return
-
-        await set_job_status(job.job_id, user_id, "queued")
 
         file_path = None
         try:
@@ -301,7 +355,6 @@ def register_handlers(app: Client):
                     except Exception:
                         pass
 
-            # Wrap upload in a strict 10 minute timeout
             await asyncio.wait_for(
                 client.send_document(
                     chat_id=callback_query.message.chat.id,
@@ -335,8 +388,13 @@ def register_handlers(app: Client):
                 except Exception as cleanup_error:
                     logger.error(f"Failed to delete {file_path}: {cleanup_error}")
 
-            # Clean up redis tracking state
             if 'job' in locals() and job:
-                await cleanup_job_data(job.job_id)
+                try:
+                    await cleanup_job_data(job.job_id)
+                except:
+                    pass
 
-            await release_lock(user_id)
+            try:
+                await release_lock(user_id)
+            except:
+                pass
