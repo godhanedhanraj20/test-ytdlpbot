@@ -1,75 +1,128 @@
-# Telegram Video Downloader Bot (Pyrogram + Redis + ARQ)
+# 🎥 Telegram Video Downloader Bot
 
-A production-ready Telegram bot that downloads videos using `yt-dlp` and sends them back to the user.
-Powered by Pyrogram, supporting regular bot accounts (50MB via Bot API, 2GB via local API) or Premium Userbots (4GB limit).
+A powerful, production-ready Telegram bot that downloads videos using `yt-dlp` and sends them back to you directly inside Telegram!
 
-## Features & Architecture
+Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (up to 4GB with Telegram Premium) and can handle multiple users at once without crashing thanks to its background queue system.
 
-Built with stability, scalability, and UX in mind:
-- **Private Mode (Whitelist):** Restrict bot usage to yourself and approved users to prevent abuse.
-- **Separation of Concerns:** The architecture splits responsibilities cleanly: the Bot handles Telegram UI/Uploading, while the Background Worker handles CPU-heavy `yt-dlp` downloading.
-- **ARQ Redis Queue:** Eliminates CPU/RAM exhaustion by delegating concurrent downloads to resilient, asynchronous background workers.
-- **Redis Progress & Status Tracking:** The worker writes live download metrics and job status (queued, downloading, uploading) to Redis, and the bot polls them. This prevents multiple open Telegram connections and avoids Premium session invalidation.
-- **Smart Format UI:** Categorizes available download options with clear emojis (🎥 Video, 🎵 Audio), resolutions, formats, and estimated file sizes. Videos are cleanly sorted High → Low resolution, and Audio Small → Large.
-  *⚠️ Explicit Audio Indicators:* Videos are strictly labeled as `🔊` (contains audio) or `🔇` (mute/video-only).
-- **Live Progress Bars:** Displays visual ASCII progress bars (`[██████....] 65%`) and calculated transfer speeds.
-- **Controlled Retry System:** Workers automatically retry failed downloads up to 2 times specifically for temporary network/HTTP interruptions.
-- **Rate Limiting:** Enforces strict hourly limits (max 5 downloads per 15 minutes per user) to protect server bandwidth.
-- **Timeout Protection:** Critical operations (extraction, download, upload) are wrapped in rigid 10-minute timeouts to ensure the queue never stalls.
-- **Graceful Cancellation:** Supports a `/cancel` command to safely abort active Redis jobs, or `/reset` if you ever get locked out.
-- **Structured Logging:** Comprehensive, debug-friendly logging tracks system health across all services (`[TIME] [LEVEL] [SERVICE] message`) to console and file (`logs/app.log`).
+---
 
-## Requirements
+## ✨ Features
 
-- Python 3.11.9
-- Redis Server (local, remote, or via Docker)
-- Telegram API Credentials (`API_ID`, `API_HASH`) from my.telegram.org
-- A Telegram Bot Token from [@BotFather](https://t.me/BotFather) OR a Pyrogram Session String (for Userbot/Premium 4GB capabilities)
+- 🔒 **Private Mode:** Lock the bot down so only you (and people you `/adduser`) can use it.
+- 🚀 **Queue System (ARQ):** Downloads happen in the background. The bot never freezes!
+- 📊 **Live Progress Bars:** Watch the download and upload speeds in real-time.
+- 🎨 **Smart UI:** Video formats are sorted cleanly (e.g., `🎥 1080p`) with clear `🔊` (Audio) and `🔇` (Mute) indicators.
+- 🛑 **Cancel Anytime:** Made a mistake? Just type `/cancel` to stop your active download.
+- 🚦 **Anti-Spam & Limits:** Built-in rate limiting and disk-space checks keep your server safe.
 
-## Setup & Deployment
+---
 
-You can deploy the bot using Docker (Recommended for VPS) or natively (Heroku / Local Testing).
+## 🛠️ Prerequisites
 
-### 1. Configure Environment Variables
+Before starting, you will need:
+1. **Python 3.11+** installed on your computer/server.
+2. A **Telegram Bot Token** (from [@BotFather](https://t.me/BotFather)).
+3. **API ID & API HASH** (from [my.telegram.org](https://my.telegram.org)).
+4. A **Redis** database (local, Docker, or a free cloud provider like Redis Cloud).
 
-First, rename the provided template:
+*(Optional)* A Pyrogram **Session String** if you want to use a Premium Telegram account to upload files up to 4GB.
+
+---
+
+## ⚙️ Initial Setup (Do this first!)
+
+Clone the repository and install the requirements:
+
+```bash
+git clone https://github.com/your-username/video-bot.git
+cd video-bot
+pip install -r requirements.txt
+```
+
+Next, set up your configuration file:
+
 ```bash
 cp sample.config.env config.env
 ```
-Then open `config.env` and fill in your details (API ID, Hash, Token, and `ADMIN_USER_ID`). Setting `ADMIN_USER_ID` locks the bot down to private use.
+Open `config.env` in a text editor and fill in your API details, Bot Token, and Redis URL. If you want the bot to be private, put your Telegram User ID in `ADMIN_USER_ID`.
 
-### 2. VPS Deployment (Docker Compose - Recommended)
+---
 
-Once `config.env` is configured, run using Docker Compose:
-```bash
-docker-compose up -d --build
-```
-This will spin up the `redis`, `bot`, and `worker` containers, passing your environment variables and sharing the `/downloads` folder automatically.
+## 🚀 Deployment Options
 
-### 3. Native / Cloud Shell / Heroku Deployment
+Choose the deployment method that fits your needs.
 
-If you prefer native execution:
-1. Ensure Redis is running locally or remotely (and configure `REDIS_URL` in `config.env`).
-2. Run the Bot and Worker in separate terminals:
+| Deployment Type | Difficulty | Cost | Best For |
+| :--- | :--- | :--- | :--- |
+| **💻 Local** | ⭐ Easy | Free | Developers testing code on their own computer. |
+| **🧪 Testing (Google Cloud)** | ⭐⭐ Medium | Free | Complete beginners wanting to test a bot online for free without adding a credit card. |
+| **☁️ Heroku** | ⭐⭐ Medium | Paid/Free | Quick scaling and native integration. |
+| **🐳 VPS (Docker)** | ⭐⭐⭐ Hard | ~$5/mo | **Production!** 24/7 uptime, massive storage, and perfect stability. |
+
+---
+
+### 💻 Local Deployment
+
+Run the bot directly on your PC or inside Google Cloud Shell for development.
+
+1. Ensure Redis is running (or you have a free `REDIS_URL` in `config.env`).
+2. Run the helper script to start **both the bot and the worker** in one terminal:
    ```bash
-   # Both commands automatically load variables from config.env
-   python -m bot.main
-   arq core.worker.WorkerSettings
+   python3 run.py
+   ```
+3. To stop the bot, press `Ctrl+C`.
+
+---
+
+### 🧪 Testing Deployment (Google Cloud Free Tier)
+
+**Perfect for complete beginners with a fresh Gmail account! No billing required.**
+
+We have written a comprehensive, step-by-step guide specifically for deploying this bot on Google Cloud Run for free. It explains how to get a free Redis database and how to navigate the Google console.
+
+👉 **[Read the Full Testing Guide Here](Testing/Testing.md)**
+
+---
+
+### ☁️ Heroku Deployment
+
+Deploy natively to Heroku using the provided `Procfile`.
+
+1. Create a new Heroku App.
+2. Provision a **Heroku Redis** add-on.
+3. In the Heroku Dashboard, copy your `config.env` variables into the **Config Vars** section.
+4. Push your code to Heroku.
+5. Important: Scale *both* processes (Bot and Worker):
+   ```bash
+   heroku ps:scale bot=1 worker=1
    ```
 
-For **Heroku**, a `Procfile` is provided. Simply provision a Heroku Redis add-on, manually copy the config values from your `config.env` into the Heroku Dashboard Config Vars, and scale both dynos:
-```bash
-heroku ps:scale bot=1 worker=1
-```
+---
 
-## How to Use & Workflow
+### 🐳 VPS Deployment (Docker Compose - Recommended)
 
-1. **Start:** Send `/start` to the bot.
-2. **Send URL:** Send a supported video URL (YouTube, Twitter, TikTok, etc.).
-3. **Select Format:** Tap an option from the inline keyboard. *Pay attention to the 🔊 / 🔇 indicators so you don't download a silent video!*
-4. **Processing:** The ARQ worker downloads the video, sending progress data back to Redis. The bot polls this data and updates your Telegram UI.
-5. **Upload:** Once the worker completes the file, the Bot reads the result and uploads it to you natively.
+For serious 24/7 usage, renting a cheap $5/mo VPS (like DigitalOcean, Hetzner, or Linode) is highly recommended.
 
-### Admin Commands
-If you configured `ADMIN_USER_ID`, the bot will only respond to you. To allow a friend to use the bot, send:
-- `/adduser <telegram_id>`: Adds the specified Telegram user ID to the persistent Redis whitelist, granting them full access.
+1. Install Docker on your VPS.
+2. Fill out your `config.env`.
+3. Run the following command:
+   ```bash
+   docker-compose up -d --build
+   ```
+This automatically spins up Redis, the Bot, and the Worker in isolated containers and shares the `/downloads` folder seamlessly.
+
+---
+
+## 🎮 How to Use
+
+1. Open Telegram and send `/start` to your bot.
+2. Send any valid video link (YouTube, TikTok, Twitter, etc.).
+3. The bot will reply with an inline keyboard full of options.
+4. Click the format you want. The bot will handle the rest in the background!
+
+**Admin Commands:**
+- `/adduser <telegram_id>`: Allow a friend to use the bot.
+
+**User Commands:**
+- `/cancel`: Stop your active download/upload safely.
+- `/reset`: Force-unlock your account if the bot accidentally crashes while you were downloading.
