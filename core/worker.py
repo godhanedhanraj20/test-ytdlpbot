@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv("config.env")
+
 import asyncio
 import os
 from arq.connections import RedisSettings

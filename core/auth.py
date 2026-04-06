@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+load_dotenv("config.env")
+
+import os
 import logging
 from core.redis import redis_client
 

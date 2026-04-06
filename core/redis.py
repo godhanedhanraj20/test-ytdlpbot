@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+load_dotenv("config.env")
+
+import os
 import redis.asyncio as redis
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")

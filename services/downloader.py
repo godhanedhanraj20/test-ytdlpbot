@@ -170,11 +170,16 @@ def filter_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         if is_video:
             item['type'] = 'video'
-            item['quality'] = f"{f.get('height', '?')}p"
+            if not is_audio:
+                # Video only (Muted)
+                item['quality'] = f"{f.get('height', '?')}p 🔇"
+            else:
+                # Video + Audio
+                item['quality'] = f"{f.get('height', '?')}p 🔊"
             video_formats.append(item)
         elif is_audio:
             item['type'] = 'audio'
-            item['quality'] = "Audio"
+            item['quality'] = "Audio 🎵"
             audio_formats.append(item)
 
     # STRICT SORTING

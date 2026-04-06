@@ -4,3 +4,4 @@ yt-dlp
 aiohttp
 arq
 redis
+python-dotenv

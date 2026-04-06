@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+load_dotenv("config.env")
+
+import os
 from arq import create_pool
 from arq.connections import RedisSettings
 
