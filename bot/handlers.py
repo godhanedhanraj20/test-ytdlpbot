@@ -227,10 +227,10 @@ def register_handlers(app: Client):
 
         except ValueError as e:
             logger.warning(f"Extraction failed for user {user_id}: {e}")
-            await processing_msg.edit_text(f"❌ Could not extract video info.\n\nError: {e}")
+            await processing_msg.edit_text(get_error_message(str(e)))
         except Exception as e:
             logger.error(f"Error extracting video for user {user_id}: {e}", exc_info=True)
-            await processing_msg.edit_text("❌ An unexpected error occurred while processing the URL.")
+            await processing_msg.edit_text(get_error_message("An unexpected error occurred while processing the URL."))
 
 
 

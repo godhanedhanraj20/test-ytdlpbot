@@ -27,7 +27,7 @@ def _extract_info_sync(url: str) -> Dict[str, Any]:
         },
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['android', 'ios']
             }
         },
         'geo_bypass': True,
@@ -43,10 +43,17 @@ async def extract_video_info(url: str) -> Dict[str, Any]:
         return await asyncio.wait_for(asyncio.to_thread(_extract_info_sync, url), timeout=60)
     except asyncio.TimeoutError:
         logger.warning(f"Timeout extracting info for {url}")
-        raise ValueError("Timeout extracting video information.")
+        raise ValueError("Extraction timed out. The video might be too large or unavailable.")
     except Exception as e:
+        error_str = str(e).lower()
         logger.error(f"Failed to extract info for {url}: {e}")
-        raise ValueError(f"Failed to extract info: {str(e)}")
+
+        if "sign in" in error_str or "login" in error_str or "bot" in error_str:
+            raise ValueError("Video requires login, is age-restricted, or blocked by anti-bot checks.")
+        elif "private" in error_str:
+            raise ValueError("This video is private.")
+        else:
+            raise ValueError("Failed to extract video information. It might be restricted or unsupported.")
 
 
 
