@@ -271,6 +271,7 @@ def register_handlers(app: Client):
         logger.info(f"User {user_id} enqueuing download for format {format_id}.")
 
         try:
+            # Wrap get_arq_pool securely to catch ConnectionErrors from ARQ
             redis_pool = await get_arq_pool()
             job = await redis_pool.enqueue_job('download_task', url, format_id, user_id)
 
@@ -282,12 +283,12 @@ def register_handlers(app: Client):
 
             await set_job_status(job.job_id, user_id, "queued")
         except Exception as e:
-            logger.error(f"Redis ARQ Error during enqueue: {e}")
+            logger.error(f"Redis ARQ Error during enqueue: {e}", exc_info=True)
             try:
                 await release_lock(user_id)
             except:
                 pass
-            await callback_query.edit_message_text(text="❌ Failed to connect to background queue. Ensure Redis is running.")
+            await callback_query.edit_message_text(text="❌ Failed to connect to background queue. Ensure Redis is properly configured.")
             return
 
         file_path = None

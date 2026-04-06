@@ -46,8 +46,6 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
             error_str = str(e)
             logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed for job {job_id}: {error_str}")
 
-            # Check if it's a retryable network or temporary yt-dlp error
-            # Simple heuristic: if 'HTTP' or 'timed out' or 'network' in error string
             is_retryable = any(kw in error_str.lower() for kw in ['http', 'time', 'network', 'connection', 'unavailable'])
 
             if attempt < max_retries and is_retryable:
@@ -63,38 +61,7 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
                 "message": f"Failed to download video: {error_str}"
             }
 
-# Parse REDIS_URL for ARQ worker settings
-host = "localhost"
-port = 6379
-database = 0
-password = None
-
-if REDIS_URL.startswith("redis://"):
-    try:
-        url_part = REDIS_URL.replace("redis://", "")
-        auth_part, host_part = "", url_part
-        if "@" in url_part:
-            auth_part, host_part = url_part.split("@", 1)
-            if ":" in auth_part:
-                _, password = auth_part.split(":", 1)
-            else:
-                password = auth_part
-
-        if "/" in host_part:
-            host_port, db_part = host_part.split("/", 1)
-            database = int(db_part)
-        else:
-            host_port = host_part
-
-        if ":" in host_port:
-            host, port_str = host_port.split(":", 1)
-            port = int(port_str)
-        else:
-            host = host_port
-    except Exception:
-        pass
-
 class WorkerSettings:
     functions = [download_task]
-    redis_settings = RedisSettings(host=host, port=port, database=database, password=password)
+    redis_settings = RedisSettings.from_dsn(REDIS_URL)
     max_jobs = 2
