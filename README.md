@@ -66,11 +66,11 @@ Choose the deployment method that fits your needs.
 Run the bot directly on your PC or inside Google Cloud Shell for development.
 
 1. Ensure Redis is running (or you have a free `REDIS_URL` in `config.env`).
-2. Run the helper script to start **both the bot and the worker** in one terminal:
+2. Run the helper script to start **both the bot and the worker process concurrently** in one terminal:
    ```bash
    python3 run.py
    ```
-3. To stop the bot, press `Ctrl+C`.
+3. To stop the bot and the worker gracefully, press `Ctrl+C`.
 
 ---
 
