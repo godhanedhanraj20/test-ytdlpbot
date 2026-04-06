@@ -1,6 +1,7 @@
 import os
 import uuid
 import asyncio
+import time
 from yt_dlp import YoutubeDL
 from typing import Dict, Any, List
 
@@ -19,18 +20,15 @@ def _extract_info_sync(url: str) -> Dict[str, Any]:
         return ydl.extract_info(url, download=False)
 
 async def extract_video_info(url: str) -> Dict[str, Any]:
-    """
-    Extracts video formats and metadata using yt-dlp without downloading.
-    Runs asynchronously to not block the main event loop.
-    """
     try:
-        result = await asyncio.to_thread(_extract_info_sync, url)
-        return result
+        # Give extract info a generous timeout as well, just in case
+        return await asyncio.wait_for(asyncio.to_thread(_extract_info_sync, url), timeout=60)
+    except asyncio.TimeoutError:
+        raise ValueError("Timeout extracting video information.")
     except Exception as e:
         raise ValueError(f"Failed to extract info: {str(e)}")
 
-def _download_video_sync(url: str, format_id: str) -> str:
-    # Generate a unique filename using UUID to avoid collisions
+def _download_video_sync(url: str, format_id: str, progress_callback=None) -> str:
     unique_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOAD_DIR, f'%(title)s_{unique_id}.%(ext)s')
 
@@ -39,15 +37,21 @@ def _download_video_sync(url: str, format_id: str) -> str:
         'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
+        'restrictfilenames': True, # Sanitize filename
     }
+
+    if progress_callback:
+        def hook(d):
+            if d['status'] == 'downloading':
+                percent = d.get('_percent_str', '0%')
+                speed = d.get('_speed_str', 'N/A')
+                progress_callback(percent, speed)
+        ydl_opts['progress_hooks'] = [hook]
 
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        # yt-dlp replaces characters in the actual filename, so we must ask it for the true filename
         filename = ydl.prepare_filename(info)
 
-        # Sometimes format selection results in merging files, changing extension
-        # If the expected file doesn't exist, search the dir for matching unique ID
         if not os.path.exists(filename):
              for file in os.listdir(DOWNLOAD_DIR):
                  if unique_id in file:
@@ -55,16 +59,38 @@ def _download_video_sync(url: str, format_id: str) -> str:
 
         return filename
 
-async def download_video(url: str, format_id: str) -> str:
+async def download_video(url: str, format_id: str, progress_message_func=None) -> str:
     """
-    Downloads the selected video format.
-    Returns the absolute file path of the downloaded video.
+    Downloads the selected video format with timeout and progress handling.
     """
+    last_update_time = [time.time()]
+
+    def sync_progress_callback(percent: str, speed: str):
+        if not progress_message_func:
+            return
+
+        current_time = time.time()
+        # Update every 3 seconds to avoid spamming Telegram API
+        if current_time - last_update_time[0] > 3:
+            last_update_time[0] = current_time
+            # Schedule the coroutine safely from the sync thread
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(
+                progress_message_func(percent, speed),
+                loop
+            )
+
     try:
-        file_path = await asyncio.to_thread(_download_video_sync, url, format_id)
+        # 15 minute timeout per download
+        file_path = await asyncio.wait_for(
+            asyncio.to_thread(_download_video_sync, url, format_id, sync_progress_callback),
+            timeout=900
+        )
         if not file_path or not os.path.exists(file_path):
             raise FileNotFoundError("Downloaded file could not be found.")
         return file_path
+    except asyncio.TimeoutError:
+        raise Exception("Download timed out (15 minutes).")
     except Exception as e:
         raise Exception(f"Download failed: {str(e)}")
 
@@ -79,29 +105,53 @@ def format_size(bytes_size: int) -> str:
 
 def filter_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Filters and formats the yt-dlp format list for presentation.
+    Filters, sorts, and groups the yt-dlp format list for presentation.
     """
-    valid_formats = []
+    video_formats = []
+    audio_formats = []
+
     for f in formats:
-        # We generally want video+audio formats or good audio/video formats to offer
-        # To avoid spamming 100 buttons, let's filter intelligently.
-        # Include formats that have a known resolution or are purely audio with known codec
-        if f.get('vcodec') != 'none' or f.get('acodec') != 'none':
-            quality = "Audio" if f.get('vcodec') == 'none' else f"{f.get('height', '?')}p"
-            ext = f.get('ext', 'unknown')
+        size = f.get('filesize') or f.get('filesize_approx') or 0
+        ext = f.get('ext', 'unknown')
+        format_id = f.get('format_id')
 
-            size = f.get('filesize') or f.get('filesize_approx')
-            size_str = format_size(size)
+        # Determine if it's purely audio or video
+        is_video = f.get('vcodec') != 'none'
+        is_audio = f.get('acodec') != 'none'
 
-            valid_formats.append({
-                'format_id': f.get('format_id'),
-                'quality': quality,
-                'ext': ext,
-                'size_str': size_str,
-                'size_bytes': size
-            })
+        if not is_video and not is_audio:
+            continue
 
-    # Deduplicate slightly by keeping best option per quality+ext combination (naive approach)
-    # To keep it simple and robust, let's just return a subset.
-    # User can select. Let's return max 15 buttons.
-    return valid_formats[-15:] # usually best formats are at the end
+        item = {
+            'format_id': format_id,
+            'ext': ext,
+            'size_str': format_size(size),
+            'size_bytes': size,
+            'height': f.get('height', 0)
+        }
+
+        if is_video:
+            item['quality'] = f"{f.get('height', '?')}p"
+            video_formats.append(item)
+        elif is_audio:
+            item['quality'] = "Audio"
+            audio_formats.append(item)
+
+    # Sort video by resolution, then size
+    video_formats.sort(key=lambda x: (x.get('height', 0), x.get('size_bytes', 0)), reverse=True)
+    # Sort audio by size (proxy for quality)
+    audio_formats.sort(key=lambda x: x.get('size_bytes', 0), reverse=True)
+
+    # We want to provide a manageable list. Best 10 video, Best 4 Audio.
+    # Deduplicate video formats purely based on resolution string to keep it clean
+    clean_video = []
+    seen_res = set()
+    for v in video_formats:
+        if v['quality'] not in seen_res:
+            seen_res.add(v['quality'])
+            clean_video.append(v)
+            if len(clean_video) >= 10:
+                break
+
+    valid_formats = clean_video + audio_formats[:4]
+    return valid_formats

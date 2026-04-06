@@ -1,15 +1,17 @@
 import os
 import sys
 import logging
+import asyncio
 from pyrogram import Client
-import bot.handlers  # This will register the handlers
+import bot.handlers
+from core.queue import start_workers
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-def main():
+async def run_bot():
     api_id = os.environ.get("API_ID")
     api_hash = os.environ.get("API_HASH")
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -39,12 +41,23 @@ def main():
         logger.error("Either TELEGRAM_BOT_TOKEN or SESSION_STRING is required.")
         sys.exit(1)
 
-    logger.info("Bot is starting up...")
+    logger.info("Starting background workers...")
+    start_workers(app, num_workers=2)
 
-    # Store app reference in handlers module so we can use decorators
+    logger.info("Bot is starting up...")
     bot.handlers.register_handlers(app)
 
-    app.run()
+    await app.start()
+
+    # Keep the bot running
+    try:
+        from pyrogram import idle
+        await idle()
+    finally:
+        await app.stop()
+
+def main():
+    asyncio.run(run_bot())
 
 if __name__ == "__main__":
     main()
