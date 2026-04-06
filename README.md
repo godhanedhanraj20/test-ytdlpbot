@@ -6,6 +6,7 @@ Powered by Pyrogram, supporting regular bot accounts (50MB via Bot API, 2GB via 
 ## Features & Architecture
 
 Built with stability, scalability, and UX in mind:
+- **Private Mode (Whitelist):** Restrict bot usage to yourself and approved users to prevent abuse.
 - **Separation of Concerns:** The architecture splits responsibilities cleanly: the Bot handles Telegram UI/Uploading, while the Background Worker handles CPU-heavy `yt-dlp` downloading.
 - **ARQ Redis Queue:** Eliminates CPU/RAM exhaustion by delegating concurrent downloads to resilient, asynchronous background workers.
 - **Redis Progress Tracking:** The worker writes live download metrics to Redis, and the bot polls them. This prevents multiple open Telegram connections and avoids Premium session invalidation.
@@ -31,7 +32,7 @@ First, rename the provided template:
 ```bash
 cp sample.config.env config.env
 ```
-Then open `config.env` and fill in your details (API ID, Hash, Token, etc.).
+Then open `config.env` and fill in your details (API ID, Hash, Token, and `ADMIN_USER_ID`). Setting `ADMIN_USER_ID` locks the bot down to private use.
 
 ### 2. VPS Deployment (Docker Compose - Recommended)
 
@@ -67,3 +68,7 @@ heroku ps:scale bot=1 worker=1
 3. **Select Format:** Tap an option from the inline keyboard. The bot pushes a job to Redis.
 4. **Processing:** The ARQ worker downloads the video, sending progress data back to Redis. The bot polls this data and updates your Telegram UI.
 5. **Upload:** Once the worker completes the file, the Bot reads the result and uploads it to you natively.
+
+### Admin Commands
+If you configured `ADMIN_USER_ID`, the bot will only respond to you. To allow a friend to use the bot, send:
+- `/adduser <telegram_id>`: Adds the specified Telegram user ID to the persistent Redis whitelist, granting them full access.

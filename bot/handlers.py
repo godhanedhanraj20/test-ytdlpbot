@@ -12,6 +12,7 @@ from services.downloader import extract_video_info, filter_formats
 from core.cache import store_format_data, get_format_data, get_progress
 from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested
 from core.queue import get_arq_pool
+from core.auth import is_user_allowed, add_allowed_user, ADMIN_USER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,11 @@ def format_speed(speed_bytes: float) -> str:
 def register_handlers(app: Client):
     @app.on_message(filters.command("start"))
     async def start_command(client: Client, message: Message):
+        user_id = message.from_user.id
+        if not await is_user_allowed(user_id):
+            await message.reply_text("🚫 You are not allowed to use this bot.")
+            return
+
         welcome_msg = (
             "👋 Welcome to the Video Downloader Bot!\n\n"
             "Send me any valid video URL (e.g., YouTube, TikTok, Twitter), "
@@ -66,18 +72,51 @@ def register_handlers(app: Client):
             "3️⃣ Wait for the download to finish!\n\n"
             "💡 Use /cancel to stop your active download."
         )
+        if ADMIN_USER_ID and user_id == ADMIN_USER_ID:
+            welcome_msg += "\n\n🔑 **Admin Commands:**\n`/adduser <telegram_id>` - Whitelist a new user."
+
         await message.reply_text(welcome_msg)
+
+    @app.on_message(filters.command("adduser"))
+    async def adduser_command(client: Client, message: Message):
+        user_id = message.from_user.id
+
+        # Security: Only ADMIN_USER_ID can use this command
+        if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
+            return
+
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply_text("❌ Usage: `/adduser <telegram_id>`")
+            return
+
+        try:
+            target_id = int(parts[1].strip())
+            if await add_allowed_user(target_id):
+                await message.reply_text(f"✅ User `{target_id}` has been successfully added to the whitelist.")
+            else:
+                await message.reply_text(f"ℹ️ User `{target_id}` is already in the whitelist.")
+        except ValueError:
+            await message.reply_text("❌ Invalid Telegram ID. It must be an integer.")
 
     @app.on_message(filters.command("cancel"))
     async def cancel_command(client: Client, message: Message):
         user_id = message.from_user.id
+        if not await is_user_allowed(user_id):
+            return
+
         if await request_cancel(user_id):
             await message.reply_text("🛑 Cancellation requested. Your active download/upload will stop shortly.")
         else:
             await message.reply_text("❌ You don't have any active downloads to cancel.")
 
-    @app.on_message(filters.text & ~filters.command(["start", "cancel"]))
+    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser"]))
     async def handle_message(client: Client, message: Message):
+        user_id = message.from_user.id
+        if not await is_user_allowed(user_id):
+            await message.reply_text("🚫 You are not allowed to use this bot.")
+            return
+
         text = message.text
 
         if not URL_REGEX.match(text):
@@ -135,6 +174,11 @@ def register_handlers(app: Client):
     @app.on_callback_query(filters.regex(r"^dl_"))
     async def button_callback(client: Client, callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
+
+        if not await is_user_allowed(user_id):
+            await callback_query.answer("🚫 You are not allowed to use this bot.", show_alert=True)
+            return
+
         parts = callback_query.data.split("_")
 
         if len(parts) < 2:
@@ -184,9 +228,7 @@ def register_handlers(app: Client):
         try:
             while True:
                 if await is_cancel_requested(user_id):
-                    # We flag it, worker will eventually throw CancelledError
                     await callback_query.edit_message_text(text="🛑 Cancellation requested. Waiting for worker to stop...")
-                    # Allow loop to continue to receive the cancelled status from ARQ
 
                 status = await job.status()
                 if status == status.complete:
