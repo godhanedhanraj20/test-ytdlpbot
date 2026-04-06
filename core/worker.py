@@ -23,7 +23,10 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
 
     def progress_callback(percent: str, speed: str):
         try:
-            loop = asyncio.get_running_loop()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
             asyncio.run_coroutine_threadsafe(
                 set_progress(job_id, percent, speed),
                 loop

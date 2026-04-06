@@ -108,10 +108,7 @@ async def download_video(url: str, format_id: str, user_id: int, progress_messag
         current_time = time.time()
         if current_time - last_update_time[0] > 3:
             last_update_time[0] = current_time
-            asyncio.run_coroutine_threadsafe(
-                progress_message_func(percent, speed),
-                loop
-            )
+            progress_message_func(percent, speed)
 
     try:
         logger.info(f"Starting download for user {user_id} with format {format_id}")

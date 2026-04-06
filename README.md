@@ -44,7 +44,12 @@ Next, set up your configuration file:
 ```bash
 cp sample.config.env config.env
 ```
-Open `config.env` in a text editor and fill in your API details, Bot Token, and Redis URL. If you want the bot to be private, put your Telegram User ID in `ADMIN_USER_ID`.
+
+**Important Details to configure in `config.env`:**
+1. Fill in `API_ID` and `API_HASH`
+2. Fill in `TELEGRAM_BOT_TOKEN`
+3. Fill in `REDIS_URL`
+4. Set `ADMIN_USER_ID` (your own Telegram user ID) to secure your bot and enable access to the admin commands.
 
 ---
 

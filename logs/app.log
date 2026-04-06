@@ -1,0 +1,2 @@
+[2026-04-06 21:46:02,337] [INFO] [YT-DLP] Starting download for user 12345 with format 18
+[2026-04-06 21:46:03,732] [ERROR] [YT-DLP] Download failed for user 12345: ERROR: unable to download video data: HTTP Error 403: Forbidden
