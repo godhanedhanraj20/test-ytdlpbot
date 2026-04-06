@@ -9,11 +9,14 @@ Built with stability, scalability, and UX in mind:
 - **Private Mode (Whitelist):** Restrict bot usage to yourself and approved users to prevent abuse.
 - **Separation of Concerns:** The architecture splits responsibilities cleanly: the Bot handles Telegram UI/Uploading, while the Background Worker handles CPU-heavy `yt-dlp` downloading.
 - **ARQ Redis Queue:** Eliminates CPU/RAM exhaustion by delegating concurrent downloads to resilient, asynchronous background workers.
-- **Redis Progress Tracking:** The worker writes live download metrics to Redis, and the bot polls them. This prevents multiple open Telegram connections and avoids Premium session invalidation.
-- **Smart Format UI:** Categorizes available download options with clear emojis (🎥 Video, 🎵 Audio), resolutions, formats, and estimated file sizes for easy selection.
+- **Redis Progress & Status Tracking:** The worker writes live download metrics and job status (queued, downloading, uploading) to Redis, and the bot polls them. This prevents multiple open Telegram connections and avoids Premium session invalidation.
+- **Smart Format UI:** Categorizes available download options with clear emojis (🎥 Video, 🎵 Audio), resolutions, formats, and estimated file sizes. Videos are cleanly sorted High → Low resolution, and Audio Small → Large.
 - **Live Progress Bars:** Displays visual ASCII progress bars (`[██████....] 65%`) and calculated transfer speeds.
+- **Controlled Retry System:** Workers automatically retry failed downloads up to 2 times specifically for temporary network/HTTP interruptions.
+- **Rate Limiting:** Enforces strict hourly limits (max 5 downloads per 15 minutes per user) to protect server bandwidth.
+- **Timeout Protection:** Critical operations (extraction, download, upload) are wrapped in rigid 10-minute timeouts to ensure the queue never stalls.
 - **Graceful Cancellation:** Supports a `/cancel` command to safely abort active Redis jobs.
-- **Anti-Spam Locks:** Enforces a per-user lock stored in Redis ensuring users cannot spam requests and crash the bot.
+- **Structured Logging:** Comprehensive, debug-friendly logging tracks system health across all services (`[TIME] [LEVEL] [SERVICE] message`) to console and file (`logs/app.log`).
 
 ## Requirements
 
