@@ -21,6 +21,19 @@ def _extract_info_sync(url: str) -> Dict[str, Any]:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        },
+        'geo_bypass': True,
+        'source_address': '0.0.0.0',
+        'retries': 3,
+        'fragment_retries': 3,
     }
     with YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
@@ -35,73 +48,128 @@ async def extract_video_info(url: str) -> Dict[str, Any]:
         logger.error(f"Failed to extract info for {url}: {e}")
         raise ValueError(f"Failed to extract info: {str(e)}")
 
+
+
+
+class ExtractionError(Exception):
+    pass
+
+class NetworkError(Exception):
+    pass
+
+class AuthError(Exception):
+    pass
+
 def _download_video_sync(url: str, format_id: str, user_id: int, loop: asyncio.AbstractEventLoop, progress_callback=None) -> str:
     unique_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOAD_DIR, f'%(title)s_{unique_id}.%(ext)s')
 
-    ydl_opts = {
-        'format': format_id,
-        'outtmpl': output_template,
-        'quiet': True,
-        'no_warnings': True,
-        'restrictfilenames': True,
-    }
+    # We will try the requested format+bestaudio/best first, then fallback to 'best'
+    formats_to_try = [
+        f'{format_id}+bestaudio/best',
+        'best'
+    ]
 
-    milestones_reached = set()
+    last_error = None
 
-    if progress_callback:
-        def hook(d):
-            future = asyncio.run_coroutine_threadsafe(is_cancel_requested(user_id), loop)
-            try:
-                cancel_requested = future.result(timeout=2)
-                if cancel_requested:
-                    raise CancelledError("User requested cancellation.")
-            except CancelledError:
-                raise
-            except Exception:
-                pass
+    for fmt in formats_to_try:
+        ydl_opts = {
+            'format': fmt,
+            'merge_output_format': 'mp4',
+            'outtmpl': output_template,
+            'quiet': True,
+            'no_warnings': True,
+            'restrictfilenames': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Accept-Language': 'en-US,en;q=0.9',
+            },
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web']
+                }
+            },
+            'geo_bypass': True,
+            'source_address': '0.0.0.0',
+            'retries': 3,
+            'fragment_retries': 3,
+        }
 
-            if d['status'] == 'downloading':
-                percent_str = d.get('_percent_str', '0%').replace('%', '').strip()
+        milestones_reached = set()
+
+        if progress_callback:
+            def hook(d):
+                future = asyncio.run_coroutine_threadsafe(is_cancel_requested(user_id), loop)
                 try:
-                    percent_val = float(percent_str)
-
-                    # Log milestones
-                    for milestone in [10, 25, 50, 75, 100]:
-                        if percent_val >= milestone and milestone not in milestones_reached:
-                            logger.info(f"User {user_id} download progress: {milestone}%")
-                            milestones_reached.add(milestone)
-
-                except ValueError:
+                    cancel_requested = future.result(timeout=2)
+                    if cancel_requested:
+                        raise CancelledError("User requested cancellation.")
+                except CancelledError:
+                    raise
+                except Exception:
                     pass
 
-                speed = d.get('_speed_str', 'N/A')
+                if d['status'] == 'downloading':
+                    percent_str = d.get('_percent_str', '0%').replace('%', '').strip()
+                    try:
+                        percent_val = float(percent_str)
 
-                downloaded = d.get('downloaded_bytes', 0)
-                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-                eta = d.get('eta', 0)
+                        # Log milestones
+                        for milestone in [10, 25, 50, 75, 100]:
+                            if percent_val >= milestone and milestone not in milestones_reached:
+                                logger.info(f"User {user_id} download progress: {milestone}%")
+                                milestones_reached.add(milestone)
 
-                progress_callback(d.get('_percent_str', '0%'), speed, downloaded, total, eta)
+                    except ValueError:
+                        pass
 
-        ydl_opts['progress_hooks'] = [hook]
+                    speed = d.get('_speed_str', 'N/A')
+                    downloaded = d.get('downloaded_bytes', 0)
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                    eta = d.get('eta', 0)
 
-    with YoutubeDL(ydl_opts) as ydl:
+                    progress_callback(d.get('_percent_str', '0%'), speed, downloaded, total, eta)
+
+            ydl_opts['progress_hooks'] = [hook]
+
         try:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
 
-            if not os.path.exists(filename):
-                 for file in os.listdir(DOWNLOAD_DIR):
-                     if unique_id in file:
-                         return os.path.join(DOWNLOAD_DIR, file)
+                # Handling merged formats
+                if not os.path.exists(filename):
+                     for file in os.listdir(DOWNLOAD_DIR):
+                         if unique_id in file:
+                             return os.path.join(DOWNLOAD_DIR, file)
 
-            return filename
+                return filename
+
         except CancelledError:
             raise
         except Exception as e:
-            if "User requested cancellation" in str(e):
+            error_str = str(e).lower()
+            if "user requested cancellation" in error_str:
                 raise CancelledError("User requested cancellation.")
-            raise e
+
+            # Categorize the error
+            if "sign in" in error_str or "login" in error_str or "403" in error_str or "forbidden" in error_str:
+                last_error = AuthError("Video requires login or is age-restricted")
+            elif "extract" in error_str:
+                last_error = ExtractionError(f"Extraction failed: {e}")
+            elif "network" in error_str or "connection" in error_str:
+                last_error = NetworkError(f"Network error: {e}")
+            else:
+                last_error = Exception(f"yt-dlp error: {e}")
+
+            logger.warning(f"Download failed for format {fmt} with error: {str(last_error)}. Retrying with fallback if available.")
+            continue # Try next format in list
+
+    # If we exhaust all formats, raise the last error
+    if last_error:
+        raise last_error
+
+    raise Exception("Failed to download video with all available formats.")
 
 async def download_video(url: str, format_id: str, user_id: int, progress_message_func=None) -> str:
     last_update_time = [time.time()]
@@ -132,6 +200,15 @@ async def download_video(url: str, format_id: str, user_id: int, progress_messag
     except asyncio.TimeoutError:
         logger.warning(f"Download timed out after 10 mins for user {user_id}")
         raise Exception("Download timed out (10 minutes).")
+    except AuthError as e:
+        logger.error(f"Auth error for user {user_id}: {e}")
+        raise AuthError(str(e))
+    except ExtractionError as e:
+        logger.error(f"Extraction error for user {user_id}: {e}")
+        raise ExtractionError(str(e))
+    except NetworkError as e:
+        logger.error(f"Network error for user {user_id}: {e}")
+        raise NetworkError(str(e))
     except Exception as e:
         if "User requested cancellation" in str(e):
             logger.info(f"Download cancelled by user {user_id}")
