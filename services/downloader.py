@@ -5,10 +5,13 @@ import time
 from yt_dlp import YoutubeDL
 from typing import Dict, Any, List
 
-DOWNLOAD_DIR = os.path.join(os.getcwd(), 'downloads')
+from core.limits import is_cancel_requested
 
-# Ensure download directory exists
+DOWNLOAD_DIR = os.path.join(os.getcwd(), 'downloads')
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+class CancelledError(Exception):
+    pass
 
 def _extract_info_sync(url: str) -> Dict[str, Any]:
     ydl_opts = {
@@ -21,14 +24,13 @@ def _extract_info_sync(url: str) -> Dict[str, Any]:
 
 async def extract_video_info(url: str) -> Dict[str, Any]:
     try:
-        # Give extract info a generous timeout as well, just in case
         return await asyncio.wait_for(asyncio.to_thread(_extract_info_sync, url), timeout=60)
     except asyncio.TimeoutError:
         raise ValueError("Timeout extracting video information.")
     except Exception as e:
         raise ValueError(f"Failed to extract info: {str(e)}")
 
-def _download_video_sync(url: str, format_id: str, progress_callback=None) -> str:
+def _download_video_sync(url: str, format_id: str, user_id: int, progress_callback=None) -> str:
     unique_id = str(uuid.uuid4())
     output_template = os.path.join(DOWNLOAD_DIR, f'%(title)s_{unique_id}.%(ext)s')
 
@@ -37,11 +39,14 @@ def _download_video_sync(url: str, format_id: str, progress_callback=None) -> st
         'outtmpl': output_template,
         'quiet': True,
         'no_warnings': True,
-        'restrictfilenames': True, # Sanitize filename
+        'restrictfilenames': True,
     }
 
     if progress_callback:
         def hook(d):
+            if is_cancel_requested(user_id):
+                raise CancelledError("User requested cancellation.")
+
             if d['status'] == 'downloading':
                 percent = d.get('_percent_str', '0%')
                 speed = d.get('_speed_str', 'N/A')
@@ -49,20 +54,25 @@ def _download_video_sync(url: str, format_id: str, progress_callback=None) -> st
         ydl_opts['progress_hooks'] = [hook]
 
     with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
+        try:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
-        if not os.path.exists(filename):
-             for file in os.listdir(DOWNLOAD_DIR):
-                 if unique_id in file:
-                     return os.path.join(DOWNLOAD_DIR, file)
+            if not os.path.exists(filename):
+                 for file in os.listdir(DOWNLOAD_DIR):
+                     if unique_id in file:
+                         return os.path.join(DOWNLOAD_DIR, file)
 
-        return filename
+            return filename
+        except CancelledError:
+            raise
+        except Exception as e:
+            # yt-dlp might wrap our CancelledError in DownloadError, so we check string representation
+            if "User requested cancellation" in str(e):
+                raise CancelledError("User requested cancellation.")
+            raise e
 
-async def download_video(url: str, format_id: str, progress_message_func=None) -> str:
-    """
-    Downloads the selected video format with timeout and progress handling.
-    """
+async def download_video(url: str, format_id: str, user_id: int, progress_message_func=None) -> str:
     last_update_time = [time.time()]
 
     def sync_progress_callback(percent: str, speed: str):
@@ -73,7 +83,6 @@ async def download_video(url: str, format_id: str, progress_message_func=None) -
         # Update every 3 seconds to avoid spamming Telegram API
         if current_time - last_update_time[0] > 3:
             last_update_time[0] = current_time
-            # Schedule the coroutine safely from the sync thread
             loop = asyncio.get_running_loop()
             asyncio.run_coroutine_threadsafe(
                 progress_message_func(percent, speed),
@@ -81,17 +90,20 @@ async def download_video(url: str, format_id: str, progress_message_func=None) -
             )
 
     try:
-        # 15 minute timeout per download
         file_path = await asyncio.wait_for(
-            asyncio.to_thread(_download_video_sync, url, format_id, sync_progress_callback),
+            asyncio.to_thread(_download_video_sync, url, format_id, user_id, sync_progress_callback),
             timeout=900
         )
         if not file_path or not os.path.exists(file_path):
             raise FileNotFoundError("Downloaded file could not be found.")
         return file_path
+    except CancelledError:
+        raise
     except asyncio.TimeoutError:
         raise Exception("Download timed out (15 minutes).")
     except Exception as e:
+        if "User requested cancellation" in str(e):
+            raise CancelledError("User requested cancellation.")
         raise Exception(f"Download failed: {str(e)}")
 
 def format_size(bytes_size: int) -> str:
@@ -104,9 +116,6 @@ def format_size(bytes_size: int) -> str:
     return f"{bytes_size:.1f} PB"
 
 def filter_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Filters, sorts, and groups the yt-dlp format list for presentation.
-    """
     video_formats = []
     audio_formats = []
 
@@ -115,7 +124,6 @@ def filter_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ext = f.get('ext', 'unknown')
         format_id = f.get('format_id')
 
-        # Determine if it's purely audio or video
         is_video = f.get('vcodec') != 'none'
         is_audio = f.get('acodec') != 'none'
 
@@ -131,19 +139,17 @@ def filter_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         }
 
         if is_video:
+            item['type'] = 'video'
             item['quality'] = f"{f.get('height', '?')}p"
             video_formats.append(item)
         elif is_audio:
+            item['type'] = 'audio'
             item['quality'] = "Audio"
             audio_formats.append(item)
 
-    # Sort video by resolution, then size
     video_formats.sort(key=lambda x: (x.get('height', 0), x.get('size_bytes', 0)), reverse=True)
-    # Sort audio by size (proxy for quality)
     audio_formats.sort(key=lambda x: x.get('size_bytes', 0), reverse=True)
 
-    # We want to provide a manageable list. Best 10 video, Best 4 Audio.
-    # Deduplicate video formats purely based on resolution string to keep it clean
     clean_video = []
     seen_res = set()
     for v in video_formats:
