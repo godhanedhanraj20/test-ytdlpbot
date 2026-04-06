@@ -79,7 +79,7 @@ def register_handlers(app: Client):
             "1️⃣ Send a link\n"
             "2️⃣ Select the format/quality\n"
             "3️⃣ Wait for the download to finish!\n\n"
-            "💡 Use /cancel to stop your active download."
+            "💡 Use /cancel to stop your active download.\n🔄 Use /reset if the bot gets stuck."
         )
         if ADMIN_USER_ID and user_id == ADMIN_USER_ID:
             welcome_msg += "\n\n🔑 **Admin Commands:**\n`/adduser <telegram_id>` - Whitelist a new user."
@@ -110,6 +110,18 @@ def register_handlers(app: Client):
             logger.error(f"Redis error adding user {target_id}: {e}")
             await message.reply_text("❌ Database error occurred while adding user.")
 
+
+    @app.on_message(filters.command("reset"))
+    async def reset_command(client: Client, message: Message):
+        user_id = message.from_user.id
+        try:
+            await release_lock(user_id)
+            await message.reply_text("🔄 Your active lock has been forcefully reset. You may now start a new download.")
+            logger.info(f"User {user_id} forcefully reset their lock.")
+        except Exception as e:
+            logger.error(f"Redis error resetting lock for {user_id}: {e}")
+            await message.reply_text("❌ Database error occurred while resetting.")
+
     @app.on_message(filters.command("cancel"))
     async def cancel_command(client: Client, message: Message):
         user_id = message.from_user.id
@@ -126,7 +138,7 @@ def register_handlers(app: Client):
             logger.error(f"Redis error during cancel for {user_id}: {e}")
             await message.reply_text("❌ Database error. Could not process cancellation.")
 
-    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser"]))
+    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser", "reset"]))
     async def handle_message(client: Client, message: Message):
         user_id = message.from_user.id
         try:
