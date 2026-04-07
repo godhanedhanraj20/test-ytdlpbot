@@ -9,6 +9,8 @@ Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (u
 ## ✨ Features
 
 - 🔒 **Private Mode & Admin Panel:** Secure the bot for your own use. Access an interactive Control Panel (`/ytdlp_bs`) to view live User Analytics, Active Jobs, Queue Size, and to seamlessly Pause/Resume operations globally.
+- ⚙️ **Personalized User Settings:** Every user can customize their experience (`/ytdlp_us`) by setting a default Download Quality, Media Type (Video/Document), Custom Prefix/Suffix for filenames, and a Custom Thumbnail!
+- ⭐ **Auto-Best Mode:** Users can toggle Auto-Best to entirely skip the format selection screen, making downloads instantly pipe to the background worker.
 - 🚀 **Queue System (ARQ):** Downloads happen in the background. The bot never freezes!
 - 📊 **Beautiful Live UI:** Custom "Obsidian Media Node" branding dynamically renders detailed download/upload speeds, queue positions, precise ETA, and live Bot Server Stats (CPU/RAM).
 - 🛡️ **Anti-Bot Bypass:** Uses advanced `yt-dlp` settings to bypass YouTube's "Sign in to confirm you're not a bot" checks without requiring cookies.
@@ -156,5 +158,6 @@ If you continue to get these errors on every video, your server's IP address has
 - `/ytdlp_bs`: Open the interactive Admin Control Panel to view analytics (Total Users, Active Jobs, Queue Size) and globally Pause/Resume the bot.
 
 **User Commands:**
+- `/ytdlp_us`: Open your Personalized Settings (Quality, Mode, Filename Prefix/Suffix, Thumbnail).
 - `/cancel`: Stop your active download/upload safely.
 - `/reset`: Force-unlock your account if the bot accidentally crashes while you were downloading.

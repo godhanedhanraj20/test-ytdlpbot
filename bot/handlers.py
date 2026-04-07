@@ -385,6 +385,7 @@ def register_handlers(app: Client):
                     # Construct an artificial callback query to trigger the download directly
                     class DummyUser:
                         id = user_id
+                        first_name = message.from_user.first_name or "User"
                     class DummyQuery:
                         from_user = DummyUser()
                         data = f"dl_{short_id}"
