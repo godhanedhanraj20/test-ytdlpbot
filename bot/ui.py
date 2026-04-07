@@ -131,14 +131,9 @@ def get_queued_message(*args, **kwargs):
 def get_admin_panel(users: int, active: int, queued: int, paused: bool) -> str:
     status = "⛔ PAUSED" if paused else "▶️ ACTIVE"
     return (
-        f"⚙️ **Obsidian Media Node Control Panel**
-
-"
-        f"🚦 Status: {status}
-"
-        f"👥 Users: {users}
-"
-        f"📥 Active Jobs: {active}
-"
-        f"📦 Queue: {queued}"
+        f"⚙️ **Obsidian Media Node Control Panel**\n\n"
+        f"🚦 Status: {status}\n"
+        f"👥 Total Users: {users}\n"
+        f"📥 Active Jobs: {active}\n"
+        f"📦 Queue Size: {queued}\n"
     )
