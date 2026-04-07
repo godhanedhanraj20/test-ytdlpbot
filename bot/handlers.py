@@ -433,7 +433,8 @@ def register_handlers(app: Client):
 
                 # Highlight best video format (usually the first one since it's sorted by resolution)
                 recommended = " ⭐" if f_type == 'video' and i == 0 else ""
-                btn_text = f"{emoji} {f['quality']} {f['ext'].upper()} – {f['size_str']}{recommended}"
+                merge_tag = " (merge audio)" if f.get('is_video_only') else ""
+                btn_text = f"{emoji} {f['quality']}{merge_tag} | {f['ext'].upper()} | {f['size_str']}{recommended}"
 
                 short_id = await store_format_data(text, f['format_id'], size_bytes, title)
                 callback_data = f"dl_{short_id}"

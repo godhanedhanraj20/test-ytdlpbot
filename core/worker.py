@@ -5,7 +5,7 @@ load_dotenv("config.env")
 import asyncio
 import os
 from arq.connections import RedisSettings
-from services.downloader import download_video, CancelledError, AuthError, ExtractionError, NetworkError, FFmpegMissingError
+from services.downloader import download_video, CancelledError, AuthError, ExtractionError, NetworkError
 from core.queue import REDIS_URL
 from core.cache import set_progress, set_job_status, add_active_job, remove_active_job
 from core.logger import setup_logger
@@ -51,15 +51,7 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
             await remove_active_job(job_id)
             return {"status": "cancelled", "error_type": "CancelledError", "message": "Task cancelled by user."}
 
-        except FFmpegMissingError as e:
-            logger.error(f"Worker failed job {job_id} permanently due to FFmpegMissingError: {e}")
-            await set_job_status(job_id, user_id, "failed")
-            await remove_active_job(job_id)
-            return {
-                "status": "error",
-                "error_type": "FFmpegMissingError",
-                "message": "⚠️ Audio merging not supported on server. Please install ffmpeg."
-            }
+
 
         except AuthError as e:
             logger.error(f"Worker failed job {job_id} permanently due to Auth Error: {e}")
