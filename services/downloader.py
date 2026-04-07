@@ -1,4 +1,5 @@
 import os
+import shutil
 import uuid
 import asyncio
 import time
@@ -12,6 +13,9 @@ logger = setup_logger(__name__, "YT-DLP")
 
 DOWNLOAD_DIR = os.path.join(os.getcwd(), 'downloads')
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+class FFmpegMissingError(Exception):
+    pass
 
 class CancelledError(Exception):
     pass
@@ -175,6 +179,11 @@ def _download_video_sync(url: str, format_id: str, user_id: int, loop: asyncio.A
     raise Exception("Failed to download video with all available formats.")
 
 async def download_video(url: str, format_id: str, user_id: int, progress_message_func=None) -> str:
+    # Ensure system supports merging
+    if not shutil.which("ffmpeg"):
+        logger.error("ffmpeg is not installed on the server.")
+        raise FFmpegMissingError("⚠️ Audio merging not supported on server. ffmpeg is missing.")
+
     last_update_time = [time.time()]
     loop = asyncio.get_running_loop()
 
@@ -254,15 +263,15 @@ def filter_formats(formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if is_video:
             item['type'] = 'video'
             if not is_audio:
-                # Video only (Muted)
-                item['quality'] = f"{f.get('height', '?')}p 🔇"
+                # Video only
+                item['quality'] = f"{f.get('height', '?')}p (video only, will merge audio)"
             else:
                 # Video + Audio
-                item['quality'] = f"{f.get('height', '?')}p 🔊"
+                item['quality'] = f"{f.get('height', '?')}p (with audio)"
             video_formats.append(item)
         elif is_audio:
             item['type'] = 'audio'
-            item['quality'] = "Audio 🎵"
+            item['quality'] = "Audio"
             audio_formats.append(item)
 
     # STRICT SORTING
