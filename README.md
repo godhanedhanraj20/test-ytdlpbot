@@ -121,6 +121,29 @@ This automatically spins up Redis, the Bot, and the Worker in isolated container
 
 ---
 
+---
+
+## 🛡️ Bypassing YouTube Anti-Bot & 403 Errors
+
+YouTube has recently introduced aggressive anti-bot mechanisms that block downloads originating from datacenter IP addresses (like Google Cloud, AWS, or DigitalOcean) with errors like:
+* `HTTP Error 403: Forbidden`
+* `Sign in to confirm you’re not a bot`
+* `Video requires login or is age-restricted`
+
+**How this bot overcomes it:**
+This bot is designed to be highly resilient to these blocks *without* requiring cookies.
+1. **Dynamic JS Solvers:** The bot utilizes `yt-dlp`'s default web clients which can solve obfuscated JavaScript challenges dynamically (Requires Node.js installed on your server).
+2. **Intelligent Format Fallbacks:** If a preferred high-quality format is blocked, the worker automatically retries downloading the next `best` available stream before giving up.
+3. **Smart Error Handling:** If an IP is permanently banned or a video is strictly age-restricted, the bot intercepts the crash and sends a user-friendly message rather than a raw stack trace.
+
+**How YOU can fix persistent 403 errors:**
+If you continue to get these errors on every video, your server's IP address has been flagged by YouTube.
+* **Fix A:** Run the bot on a **residential internet connection** (like your local PC at home).
+* **Fix B:** Deploy the bot on a VPS and configure your server to route `yt-dlp` traffic through an IPv6 proxy or a residential VPN.
+* **Fix C (Advanced):** Manually provide an `oauth2` token or `--cookies` file inside the `services/downloader.py` configuration.
+
+---
+
 ## 🎮 How to Use
 
 1. Open Telegram and send `/start` to your bot.
