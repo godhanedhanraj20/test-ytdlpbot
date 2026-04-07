@@ -14,7 +14,7 @@ from bot.ui import (
 
 
 from services.downloader import extract_video_info, filter_formats
-from core.cache import store_format_data, track_user, get_total_users, set_bot_paused, is_bot_paused, get_format_data, get_progress, set_job_status, cleanup_job_data
+from core.cache import store_format_data, track_user, get_total_users, set_bot_paused, is_bot_paused, get_active_jobs_count, get_format_data, get_progress, set_job_status, cleanup_job_data
 from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit
 from core.queue import get_arq_pool
 from core.auth import is_user_allowed, add_allowed_user
@@ -150,7 +150,7 @@ def register_handlers(app: Client):
     @app.on_message(filters.command("ytdlp_bs"))
     async def admin_panel_cmd(client: Client, message: Message):
         user_id = message.from_user.id
-        if not int(os.environ.get('ADMIN_USER_ID', 0)) or user_id != int(os.environ.get('ADMIN_USER_ID', 0)):
+        if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
             return
 
         try:
@@ -158,15 +158,14 @@ def register_handlers(app: Client):
             paused = await is_bot_paused()
             redis = await get_arq_pool()
             queued = len(await redis.queued_jobs())
-            # For active jobs, arq doesn't provide an easy active count without querying all jobs.
-            # We'll use 0 as a placeholder for now, or we can use redis keys. Let's use 0 to avoid performance hits.
-            active = 0
+            active = await get_active_jobs_count()
 
             panel_text = get_admin_panel(users, active, queued, paused)
 
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"), InlineKeyboardButton("🧹 Clear Queue", callback_data="admin_clear")],
-                [InlineKeyboardButton("▶️ Resume", callback_data="admin_resume"), InlineKeyboardButton("⛔ Pause", callback_data="admin_pause")]
+                [InlineKeyboardButton("⛔ Pause Bot", callback_data="admin_pause"), InlineKeyboardButton("▶️ Resume Bot", callback_data="admin_resume")],
+                [InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings")]
             ])
             await message.reply_text(panel_text, reply_markup=keyboard)
         except Exception as e:
@@ -175,7 +174,7 @@ def register_handlers(app: Client):
     @app.on_callback_query(filters.regex(r"^admin_"))
     async def admin_callback(client: Client, callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
-        if not int(os.environ.get('ADMIN_USER_ID', 0)) or user_id != int(os.environ.get('ADMIN_USER_ID', 0)):
+        if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
             await callback_query.answer("🚫 Access Denied", show_alert=True)
             return
 
@@ -191,19 +190,24 @@ def register_handlers(app: Client):
             elif action == "clear":
                 redis = await get_arq_pool()
                 # Empty ARQ queues - not natively supported by easy method, so we skip exact flush unless necessary
-                # Instead, we just answer.
-                await callback_query.answer("🧹 This feature requires redis-cli FLUSHALL", show_alert=True)
+                await callback_query.answer("🧹 This feature requires redis-cli FLUSHALL for now", show_alert=True)
+            elif action == "settings":
+                await callback_query.answer("⚙️ Dynamic Config (Advanced) - Coming Soon", show_alert=True)
+            elif action == "stats":
+                await callback_query.answer("📊 Live Server Stats Refreshing...")
 
             # Refresh Panel
             users = await get_total_users()
             paused = await is_bot_paused()
             redis = await get_arq_pool()
             queued = len(await redis.queued_jobs())
+            active = await get_active_jobs_count()
 
-            panel_text = get_admin_panel(users, 0, queued, paused)
+            panel_text = get_admin_panel(users, active, queued, paused)
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"), InlineKeyboardButton("🧹 Clear Queue", callback_data="admin_clear")],
-                [InlineKeyboardButton("▶️ Resume", callback_data="admin_resume"), InlineKeyboardButton("⛔ Pause", callback_data="admin_pause")]
+                [InlineKeyboardButton("⛔ Pause Bot", callback_data="admin_pause"), InlineKeyboardButton("▶️ Resume Bot", callback_data="admin_resume")],
+                [InlineKeyboardButton("⚙️ Settings", callback_data="admin_settings")]
             ])
             await callback_query.edit_message_text(panel_text, reply_markup=keyboard)
         except Exception as e:

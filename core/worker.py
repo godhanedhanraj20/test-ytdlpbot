@@ -7,7 +7,7 @@ import os
 from arq.connections import RedisSettings
 from services.downloader import download_video, CancelledError, AuthError, ExtractionError, NetworkError
 from core.queue import REDIS_URL
-from core.cache import set_progress, set_job_status
+from core.cache import set_progress, set_job_status, add_active_job, remove_active_job
 from core.logger import setup_logger
 
 logger = setup_logger("worker", "WORKER")
@@ -20,6 +20,7 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
     job_id = ctx['job_id']
     logger.info(f"Worker started job {job_id} for user {user_id}")
     await set_job_status(job_id, user_id, "downloading")
+    await add_active_job(job_id)
 
     def progress_callback(percent: str, speed: str, downloaded: int, total: int, eta: int):
         try:
@@ -42,17 +43,20 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
             file_path = await download_video(url, format_id, user_id, progress_message_func=progress_callback)
             logger.info(f"Worker successfully completed job {job_id}. File: {file_path}")
             await set_job_status(job_id, user_id, "completed")
+            await remove_active_job(job_id)
             return {"status": "success", "file_path": file_path}
 
 
         except CancelledError:
             logger.info(f"Worker cancelled job {job_id} for user {user_id}")
             await set_job_status(job_id, user_id, "failed")
+            await remove_active_job(job_id)
             return {"status": "cancelled", "error_type": "CancelledError", "message": "Task cancelled by user."}
 
         except AuthError as e:
             logger.error(f"Worker failed job {job_id} permanently due to Auth Error: {e}")
             await set_job_status(job_id, user_id, "failed")
+            await remove_active_job(job_id)
             return {
                 "status": "error",
                 "error_type": "AuthError",
@@ -62,6 +66,7 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
         except ExtractionError as e:
             logger.error(f"Worker failed job {job_id} permanently due to Extraction Error: {e}")
             await set_job_status(job_id, user_id, "failed")
+            await remove_active_job(job_id)
             return {
                 "status": "error",
                 "error_type": "ExtractionError",
@@ -81,6 +86,7 @@ async def download_task(ctx, url: str, format_id: str, user_id: int):
 
             logger.error(f"Worker failed job {job_id} permanently: {error_str}")
             await set_job_status(job_id, user_id, "failed")
+            await remove_active_job(job_id)
             return {
                 "status": "error",
                 "error_type": "DownloadError",

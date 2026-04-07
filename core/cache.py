@@ -75,3 +75,13 @@ async def set_bot_paused(paused: bool):
 
 async def is_bot_paused() -> bool:
     return bool(await redis_client.get("bot:paused"))
+
+
+async def add_active_job(job_id: str):
+    await redis_client.sadd("bot:active_jobs", job_id)
+
+async def remove_active_job(job_id: str):
+    await redis_client.srem("bot:active_jobs", job_id)
+
+async def get_active_jobs_count() -> int:
+    return await redis_client.scard("bot:active_jobs")
