@@ -52,9 +52,9 @@ Before downloading, the bot securely fetches the metadata (bypassing anti-bot ch
 Select a format to download:
 ```
 *Inline Buttons:*
-* `[🎥 1080p (video only, will merge audio) MP4 – 15.0MB ⭐]` *(Best recommended format)*
-* `[🎥 720p (with audio) MP4 – 8.5MB]`
-* `[Audio 🎵 M4A – 2.0MB]`
+* `[🎥 1080p (merge audio) | MP4 | 15.0MB ⭐]` *(Best recommended format)*
+* `[🎥 720p | MP4 | 8.5MB]`
+* `[🎵 Audio | M4A | 2.0MB]`
 * `[❌ Cancel]`
 
 ### Phase B: On-The-Fly Renaming

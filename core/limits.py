@@ -39,3 +39,7 @@ async def check_rate_limit(user_id: int) -> bool:
         return False
 
     return True
+
+
+async def is_locked(user_id: int) -> bool:
+    return await redis_client.exists(f"lock:{user_id}")

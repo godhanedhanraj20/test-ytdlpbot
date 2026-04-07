@@ -17,7 +17,7 @@ from bot.ui import (
 
 from services.downloader import extract_video_info, filter_formats
 from core.cache import store_format_data, track_user, get_total_users, set_bot_paused, is_bot_paused, get_active_jobs_count, get_format_data, get_progress, set_job_status, cleanup_job_data
-from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit
+from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit, is_locked
 from core.queue import get_arq_pool
 from core.redis import redis_client
 from core.auth import is_user_allowed, add_allowed_user
@@ -351,6 +351,13 @@ def register_handlers(app: Client):
         if not URL_REGEX.match(text):
             await message.reply_text("❌ Please send a valid HTTP/HTTPS URL.")
             return
+
+        try:
+            if await is_locked(user_id):
+                await message.reply_text("⚠️ You already have an active download. Please wait until it finishes, or use /cancel to stop it.")
+                return
+        except:
+            pass
 
         logger.info(f"User {user_id} requested URL: {text}")
 

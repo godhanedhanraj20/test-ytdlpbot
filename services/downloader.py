@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import uuid
 import asyncio
@@ -128,6 +129,8 @@ def _download_video_sync(url: str, format_id: str, user_id: int, loop: asyncio.A
                         pass
 
                     speed = d.get('_speed_str', 'N/A')
+                if isinstance(speed, str):
+                    speed = re.sub(r'\x1B(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])', '', speed).strip()
                     downloaded = d.get('downloaded_bytes', 0)
                     total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
                     eta = d.get('eta', 0)

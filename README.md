@@ -26,7 +26,7 @@ Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (u
 ## 🛠️ Prerequisites
 
 Before starting, you will need:
-1. **Python 3.11+** installed on your computer/server.
+1. **Python 3.11+** and **FFmpeg** installed on your computer/server (FFmpeg is required to safely merge high-quality video/audio streams).
 2. A **Telegram Bot Token** (from [@BotFather](https://t.me/BotFather)).
 3. **API ID & API HASH** (from [my.telegram.org](https://my.telegram.org)).
 4. A **Redis** database (local, Docker, or a free cloud provider like Redis Cloud).
