@@ -25,11 +25,7 @@ def _extract_info_sync(url: str) -> Dict[str, Any]:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
             'Accept-Language': 'en-US,en;q=0.9',
         },
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios']
-            }
-        },
+
         'geo_bypass': True,
         'source_address': '0.0.0.0',
         'retries': 3,
@@ -49,7 +45,7 @@ async def extract_video_info(url: str) -> Dict[str, Any]:
         logger.error(f"Failed to extract info for {url}: {e}")
 
         if "sign in" in error_str or "login" in error_str or "bot" in error_str:
-            raise ValueError("Video requires login, is age-restricted, or blocked by anti-bot checks.")
+            raise ValueError("Video is restricted or blocked by YouTube anti-bot checks.\n\n**How to bypass:**\n1. Try a different video link.\n2. Deploy this bot on a residential IP or VPS (Google Cloud IPs are often blocked).\n3. (Advanced) Configure yt-dlp with `--cookies` in the source code.")
         elif "private" in error_str:
             raise ValueError("This video is private.")
         else:
