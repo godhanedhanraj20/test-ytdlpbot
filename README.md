@@ -76,12 +76,17 @@ Choose the deployment method that fits your needs.
 
 Run the bot directly on your PC or inside Google Cloud Shell for development.
 
-1. Ensure Redis is running (or you have a free `REDIS_URL` in `config.env`).
-2. Run the helper script to start **both the bot and the worker process concurrently** in one terminal:
+1. Ensure **Redis** is running (or you have a free `REDIS_URL` in `config.env`).
+2. Ensure **FFmpeg** is installed on your machine so the bot can merge 1080p Video + Audio streams!
+   *(Ubuntu/Debian/Google Cloud Shell)*:
+   ```bash
+   sudo apt-get update && sudo apt-get install -y ffmpeg
+   ```
+3. Run the helper script to start **both the bot and the worker process concurrently** in one terminal:
    ```bash
    python3 run.py
    ```
-3. To stop the bot and the worker gracefully, press `Ctrl+C`.
+4. To stop the bot and the worker gracefully, press `Ctrl+C`.
 
 ---
 
