@@ -7,6 +7,8 @@ from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.errors import MessageNotModified
 
+from bot.user_settings import get_user_settings, update_user_settings, init_user_settings
+from bot.ui import get_user_settings_panel, get_user_settings_keyboard, get_quality_settings_keyboard
 from bot.ui import (
     format_size, format_time, make_progress_bar, get_preview_message,
     get_detailed_message, get_completion_summary, get_error_message, get_admin_panel
@@ -17,6 +19,7 @@ from services.downloader import extract_video_info, filter_formats
 from core.cache import store_format_data, track_user, get_total_users, set_bot_paused, is_bot_paused, get_active_jobs_count, get_format_data, get_progress, set_job_status, cleanup_job_data
 from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit
 from core.queue import get_arq_pool
+from core.redis import redis_client
 from core.auth import is_user_allowed, add_allowed_user
 ADMIN_USER_ID = int(os.environ.get('ADMIN_USER_ID', 0))
 from core.logger import setup_logger
@@ -70,6 +73,7 @@ def register_handlers(app: Client):
     async def start_command(client: Client, message: Message):
         user_id = message.from_user.id
         await track_user(user_id)
+        await init_user_settings(user_id)
 
         try:
             allowed = await is_user_allowed(user_id)
@@ -147,6 +151,65 @@ def register_handlers(app: Client):
             await message.reply_text("❌ Database error. Could not process cancellation.")
 
 
+
+    @app.on_message(filters.command("ytdlp_us"))
+    async def user_settings_cmd(client: Client, message: Message):
+        user_id = message.from_user.id
+        settings = await get_user_settings(user_id)
+        panel = get_user_settings_panel(settings)
+        keyboard = get_user_settings_keyboard(settings)
+        await message.reply_text(panel, reply_markup=keyboard)
+
+    @app.on_callback_query(filters.regex(r"^us_"))
+    async def user_settings_callback(client: Client, callback_query: CallbackQuery):
+        user_id = callback_query.from_user.id
+        action = callback_query.data.split("_", 1)[1]
+        settings = await get_user_settings(user_id)
+
+        if action == "mode":
+            new_mode = "audio" if settings.get("mode") == "video" else "video"
+            await update_user_settings(user_id, {"mode": new_mode})
+        elif action == "send":
+            new_send = "document" if settings.get("send_as") == "media" else "media"
+            await update_user_settings(user_id, {"send_as": new_send})
+        elif action == "autobest":
+            new_auto = not settings.get("auto_best", False)
+            await update_user_settings(user_id, {"auto_best": new_auto})
+            if new_auto:
+                await update_user_settings(user_id, {"quality": "best"})
+        elif action == "quality":
+            keyboard = get_quality_settings_keyboard()
+            await callback_query.edit_message_text("🎥 **Select Default Quality:**\n\n*If Auto Best is ON, this is ignored.*", reply_markup=keyboard)
+            return
+        elif action.startswith("q_"):
+            q_val = action.split("_")[1]
+            await update_user_settings(user_id, {"quality": q_val, "auto_best": False})
+        elif action == "clear_thumb":
+            await update_user_settings(user_id, {"thumbnail": None})
+            await callback_query.answer("🗑 Thumbnail cleared", show_alert=True)
+        elif action == "clear_tags":
+            await update_user_settings(user_id, {"prefix": "", "suffix": ""})
+            await callback_query.answer("🗑 Prefix/Suffix cleared", show_alert=True)
+        elif action == "close":
+            await callback_query.message.delete()
+            return
+        elif action in ["prefix", "suffix", "thumb"]:
+            # State machine setup in Redis for next message
+            await redis_client.setex(f"state:{user_id}", 300, action)
+            if action == "thumb":
+                await callback_query.answer("Please send the image you want to use as a thumbnail...", show_alert=True)
+                await callback_query.message.reply_text("🖼 Send an image now. I will save it as your custom thumbnail.\n\n*Timeout: 5 minutes.*")
+            else:
+                await callback_query.answer(f"Please send the text you want to use as {action}...", show_alert=True)
+                await callback_query.message.reply_text(f"✏️ Send the text you want to use as your {action}.\n\n*Example:* `[MyChannel]`\n*Timeout: 5 minutes.*")
+            return
+
+        # Refresh panel
+        settings = await get_user_settings(user_id)
+        panel = get_user_settings_panel(settings)
+        keyboard = get_user_settings_keyboard(settings)
+        await callback_query.edit_message_text(panel, reply_markup=keyboard)
+
     @app.on_message(filters.command("ytdlp_bs"))
     async def admin_panel_cmd(client: Client, message: Message):
         user_id = message.from_user.id
@@ -214,7 +277,31 @@ def register_handlers(app: Client):
             await callback_query.answer(f"Error: {e}")
 
 
-    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser", "reset", "ytdlp_bs"]))
+
+    @app.on_message(filters.photo | filters.text, group=-1)
+    async def state_catcher_handler(client: Client, message: Message):
+        user_id = message.from_user.id
+        state = await redis_client.get(f"state:{user_id}")
+        if not state:
+            return
+
+        state = state.decode("utf-8") if isinstance(state, bytes) else str(state)
+
+        if state == "thumb":
+            if message.photo:
+                file_id = message.photo.file_id
+                await update_user_settings(user_id, {"thumbnail": file_id})
+                await message.reply_text("✅ Custom thumbnail saved!")
+                await redis_client.delete(f"state:{user_id}")
+                message.stop_propagation()
+        elif state in ["prefix", "suffix"]:
+            if message.text and not message.text.startswith("/"):
+                await update_user_settings(user_id, {state: message.text.strip()})
+                await message.reply_text(f"✅ {state.capitalize()} updated to: `{message.text.strip()}`")
+                await redis_client.delete(f"state:{user_id}")
+                message.stop_propagation()
+
+    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser", "reset", "ytdlp_bs", "ytdlp_us"]))
     async def handle_message(client: Client, message: Message):
         user_id = message.from_user.id
         await track_user(user_id)
@@ -257,6 +344,11 @@ def register_handlers(app: Client):
             await message.reply_text("⚠️ Server disk space is low. Please try again later.")
             return
 
+        settings = await get_user_settings(user_id)
+        mode = settings.get("mode", "video")
+        quality_pref = settings.get("quality", "ask")
+        auto_best = settings.get("auto_best", False)
+
         processing_msg = await message.reply_text("🔄 Extracting video information...")
 
         try:
@@ -269,6 +361,42 @@ def register_handlers(app: Client):
 
             title = info.get('title', 'Unknown Title')
             duration = info.get('duration', 0)
+
+
+            if auto_best or quality_pref != "ask":
+                # Find matching format or best
+                chosen_format = None
+
+                if mode == "audio":
+                    chosen_format = next((f for f in filtered_formats if f.get('type') == 'audio'), None)
+                else:
+                    if quality_pref in ["1080p", "720p", "480p", "360p"]:
+                        chosen_format = next((f for f in filtered_formats if f.get('type') == 'video' and str(f.get('height')) + 'p' == quality_pref), None)
+                        if not chosen_format:
+                            chosen_format = filtered_formats[0] if filtered_formats else None
+                    else:
+                        chosen_format = next((f for f in filtered_formats if f.get('type') == 'video'), None)
+
+                if chosen_format:
+                    format_id = chosen_format['format_id']
+                    size_bytes = chosen_format['size_bytes']
+                    short_id = await store_format_data(text, format_id, size_bytes, title)
+
+                    # Construct an artificial callback query to trigger the download directly
+                    class DummyUser:
+                        id = user_id
+                    class DummyQuery:
+                        from_user = DummyUser()
+                        data = f"dl_{short_id}"
+                        message = processing_msg
+                        async def answer(self, *args, **kwargs):
+                            pass
+                        async def edit_message_text(self, *args, **kwargs):
+                            await self.message.edit_text(*args, **kwargs)
+
+                    await processing_msg.edit_text("⚡ Auto-Selected Format! Enqueueing...")
+                    await button_callback(client, DummyQuery())
+                    return
 
             keyboard = []
             row = []

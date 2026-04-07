@@ -137,3 +137,55 @@ def get_admin_panel(users: int, active: int, queued: int, paused: bool) -> str:
         f"📥 Active Jobs: {active}\n"
         f"📦 Queue Size: {queued}\n"
     )
+
+
+def get_user_settings_panel(settings: dict) -> str:
+    mode = "🎬 Video" if settings.get("mode") == "video" else "🎵 Audio"
+    send_as = "📺 Media" if settings.get("send_as") == "media" else "📄 Document"
+    quality = "🤔 Ask Every Time" if settings.get("quality") == "ask" else f"🎥 {str(settings.get('quality')).capitalize()}"
+    if settings.get('auto_best'):
+        quality = "⭐ Auto Best"
+
+    thumbnail = "✅ Set" if settings.get("thumbnail") else "❌ Not Set"
+    prefix = settings.get("prefix") or "None"
+    suffix = settings.get("suffix") or "None"
+
+    return (
+        f"⚙️ **User Settings**\n\n"
+        f"🎬 **Mode:** {mode}\n"
+        f"📄 **Send As:** {send_as}\n"
+        f"🎥 **Quality:** {quality}\n"
+        f"🖼 **Thumbnail:** {thumbnail}\n"
+        f"✏️ **Prefix:** {prefix}\n"
+        f"✏️ **Suffix:** {suffix}\n\n"
+        f"Select an option to modify:"
+    )
+
+def get_user_settings_keyboard(settings: dict):
+    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    # Toggle states
+    mode_btn = "🎵 Audio" if settings.get("mode") == "audio" else "🎬 Video"
+    send_as_btn = "📄 Doc" if settings.get("send_as") == "document" else "📺 Media"
+    auto_best_btn = "⭐ Auto Best: ON" if settings.get("auto_best") else "⭐ Auto Best: OFF"
+
+    keyboard = [
+        [InlineKeyboardButton(f"Mode: {mode_btn}", callback_data="us_mode"), InlineKeyboardButton(f"Send As: {send_as_btn}", callback_data="us_send")],
+        [InlineKeyboardButton("🎥 Quality Preference", callback_data="us_quality")],
+        [InlineKeyboardButton(auto_best_btn, callback_data="us_autobest")],
+        [InlineKeyboardButton("🖼 Custom Thumbnail", callback_data="us_thumb"), InlineKeyboardButton("🗑 Clear Thumb", callback_data="us_clear_thumb")],
+        [InlineKeyboardButton("✏️ Set Prefix", callback_data="us_prefix"), InlineKeyboardButton("✏️ Set Suffix", callback_data="us_suffix")],
+        [InlineKeyboardButton("🗑 Clear Tags", callback_data="us_clear_tags"), InlineKeyboardButton("❌ Close", callback_data="us_close")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_quality_settings_keyboard():
+    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    keyboard = [
+        [InlineKeyboardButton("🤔 Ask Every Time", callback_data="us_q_ask")],
+        [InlineKeyboardButton("⭐ Best Available", callback_data="us_q_best")],
+        [InlineKeyboardButton("🎥 1080p", callback_data="us_q_1080p"), InlineKeyboardButton("🎥 720p", callback_data="us_q_720p")],
+        [InlineKeyboardButton("🎥 480p", callback_data="us_q_480p"), InlineKeyboardButton("🎥 360p", callback_data="us_q_360p")],
+        [InlineKeyboardButton("⬅️ Back to Settings", callback_data="us_back")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
