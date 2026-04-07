@@ -94,7 +94,7 @@ def get_detailed_message(
         msg += f"┠ Status: {status_emoji} | ETA: {format_time(eta)}\n"
         msg += f"┠ Speed: {speed} | Elapsed: {format_time(elapsed)}\n"
 
-    msg += f"┠ Engine: YT-DLP | Pyrogram\n"
+    msg += f"┠ Engine: Obsidian Media Node | Pyrogram\n"
     msg += f"┠ User: {user_name} | ID: {user_id}\n"
     msg += f"┖ /cancel\n\n"
 
@@ -106,14 +106,14 @@ def get_detailed_message(
 
 def get_completion_summary(total_time: int, file_size: int, title: str) -> str:
     return (
-        f"✅ **{title} downloaded**\n\n"
+        f"✅ **Obsidian Node Complete**\n🎬 {title}\n\n"
         f"⏱ Total time: {format_time(total_time)}\n"
         f"📦 Size: {format_size(file_size)}"
     )
 
 def get_error_message(reason: str) -> str:
     return (
-        f"❌ **Download failed**\n"
+        f"❌ **Obsidian Node Error**\n"
         f"Reason: {reason}"
     )
 
@@ -125,3 +125,16 @@ def get_upload_progress_message(*args, **kwargs):
 
 def get_queued_message(*args, **kwargs):
     pass # Replaced by detailed message
+
+
+
+def get_admin_panel(users: int, active: int, queued: int, paused: bool) -> str:
+    status = "⛔ PAUSED" if paused else "▶️ ACTIVE"
+    return (
+        f"⚙️ **Obsidian Media Node Control Panel**\n\n"
+        f"🚦 Status: {status}\n"
+        f"👥 Total Users: {users}\n"
+        f"📥 Active Jobs: {active}\n"
+        f"📦 Queue Size: {queued}\n\n"
+        f"Select an action below:"
+    )

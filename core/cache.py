@@ -59,3 +59,19 @@ async def cleanup_job_data(job_id: str):
     """Cleans up temporary tracking keys once a job finishes."""
     await redis_client.delete(f"progress:{job_id}")
     await redis_client.delete(f"status:{job_id}")
+
+
+async def track_user(user_id: int):
+    await redis_client.sadd("bot:users", user_id)
+
+async def get_total_users() -> int:
+    return await redis_client.scard("bot:users")
+
+async def set_bot_paused(paused: bool):
+    if paused:
+        await redis_client.set("bot:paused", "1")
+    else:
+        await redis_client.delete("bot:paused")
+
+async def is_bot_paused() -> bool:
+    return bool(await redis_client.get("bot:paused"))

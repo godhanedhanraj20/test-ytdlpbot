@@ -9,15 +9,16 @@ from pyrogram.errors import MessageNotModified
 
 from bot.ui import (
     format_size, format_time, make_progress_bar, get_preview_message,
-    get_detailed_message, get_completion_summary, get_error_message
+    get_detailed_message, get_completion_summary, get_error_message, get_admin_panel
 )
 
 
 from services.downloader import extract_video_info, filter_formats
-from core.cache import store_format_data, get_format_data, get_progress, set_job_status, cleanup_job_data
+from core.cache import store_format_data, track_user, get_total_users, set_bot_paused, is_bot_paused, get_format_data, get_progress, set_job_status, cleanup_job_data
 from core.limits import acquire_lock, release_lock, request_cancel, is_cancel_requested, check_rate_limit
 from core.queue import get_arq_pool
-from core.auth import is_user_allowed, add_allowed_user, ADMIN_USER_ID
+from core.auth import is_user_allowed, add_allowed_user
+ADMIN_USER_ID = int(os.environ.get('ADMIN_USER_ID', 0))
 from core.logger import setup_logger
 
 logger = setup_logger("handlers", "BOT")
@@ -68,27 +69,27 @@ def register_handlers(app: Client):
     @app.on_message(filters.command("start"))
     async def start_command(client: Client, message: Message):
         user_id = message.from_user.id
+        await track_user(user_id)
+
         try:
             allowed = await is_user_allowed(user_id)
             if not allowed:
-                await message.reply_text("🚫 You are not allowed to use this bot.")
+                await message.reply_text("🚫 You are not allowed to use this node.")
                 return
         except Exception as e:
             logger.error(f"Redis error checking whitelist for {user_id}: {e}")
-            await message.reply_text("❌ A database connection error occurred. Please contact the administrator.")
+            await message.reply_text("❌ A database connection error occurred.")
             return
 
         welcome_msg = (
-            "👋 Welcome to the Video Downloader Bot!\n\n"
-            "Send me any valid video URL (e.g., YouTube, TikTok, Twitter), "
-            "and I will help you download it.\n\n"
-            "1️⃣ Send a link\n"
-            "2️⃣ Select the format/quality\n"
-            "3️⃣ Wait for the download to finish!\n\n"
-            "💡 Use /cancel to stop your active download.\n🔄 Use /reset if the bot gets stuck."
+            "⚡ **Obsidian Media Node**\n\n"
+            "High-performance media downloader.\n"
+            "Send a link to begin.\n\n"
+            "💡 /cancel - stop active download\n"
+            "🔄 /reset - unstick your account"
         )
-        if ADMIN_USER_ID and user_id == ADMIN_USER_ID:
-            welcome_msg += "\n\n🔑 **Admin Commands:**\n`/adduser <telegram_id>` - Whitelist a new user."
+        if int(os.environ.get('ADMIN_USER_ID', 0)) and user_id == int(os.environ.get('ADMIN_USER_ID', 0)):
+            welcome_msg += "\n\n🔑 **Admin:**\n`/adduser <id>`\n`/ytdlp_bs` - Control Panel"
 
         await message.reply_text(welcome_msg)
 
@@ -96,7 +97,7 @@ def register_handlers(app: Client):
     async def adduser_command(client: Client, message: Message):
         user_id = message.from_user.id
 
-        if not ADMIN_USER_ID or user_id != ADMIN_USER_ID:
+        if not int(os.environ.get('ADMIN_USER_ID', 0)) or user_id != int(os.environ.get('ADMIN_USER_ID', 0)):
             return
 
         parts = message.text.split(maxsplit=1)
@@ -131,6 +132,7 @@ def register_handlers(app: Client):
     @app.on_message(filters.command("cancel"))
     async def cancel_command(client: Client, message: Message):
         user_id = message.from_user.id
+        await track_user(user_id)
         try:
             if not await is_user_allowed(user_id):
                 return
@@ -144,9 +146,74 @@ def register_handlers(app: Client):
             logger.error(f"Redis error during cancel for {user_id}: {e}")
             await message.reply_text("❌ Database error. Could not process cancellation.")
 
-    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser", "reset"]))
+
+    @app.on_message(filters.command("ytdlp_bs"))
+    async def admin_panel_cmd(client: Client, message: Message):
+        user_id = message.from_user.id
+        if not int(os.environ.get('ADMIN_USER_ID', 0)) or user_id != int(os.environ.get('ADMIN_USER_ID', 0)):
+            return
+
+        try:
+            users = await get_total_users()
+            paused = await is_bot_paused()
+            redis = await get_arq_pool()
+            queued = len(await redis.queued_jobs())
+            # For active jobs, arq doesn't provide an easy active count without querying all jobs.
+            # We'll use 0 as a placeholder for now, or we can use redis keys. Let's use 0 to avoid performance hits.
+            active = 0
+
+            panel_text = get_admin_panel(users, active, queued, paused)
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"), InlineKeyboardButton("🧹 Clear Queue", callback_data="admin_clear")],
+                [InlineKeyboardButton("▶️ Resume", callback_data="admin_resume"), InlineKeyboardButton("⛔ Pause", callback_data="admin_pause")]
+            ])
+            await message.reply_text(panel_text, reply_markup=keyboard)
+        except Exception as e:
+            await message.reply_text(f"❌ Error: {e}")
+
+    @app.on_callback_query(filters.regex(r"^admin_"))
+    async def admin_callback(client: Client, callback_query: CallbackQuery):
+        user_id = callback_query.from_user.id
+        if not int(os.environ.get('ADMIN_USER_ID', 0)) or user_id != int(os.environ.get('ADMIN_USER_ID', 0)):
+            await callback_query.answer("🚫 Access Denied", show_alert=True)
+            return
+
+        action = callback_query.data.split("_")[1]
+
+        try:
+            if action == "pause":
+                await set_bot_paused(True)
+                await callback_query.answer("⛔ Node Paused")
+            elif action == "resume":
+                await set_bot_paused(False)
+                await callback_query.answer("▶️ Node Resumed")
+            elif action == "clear":
+                redis = await get_arq_pool()
+                # Empty ARQ queues - not natively supported by easy method, so we skip exact flush unless necessary
+                # Instead, we just answer.
+                await callback_query.answer("🧹 This feature requires redis-cli FLUSHALL", show_alert=True)
+
+            # Refresh Panel
+            users = await get_total_users()
+            paused = await is_bot_paused()
+            redis = await get_arq_pool()
+            queued = len(await redis.queued_jobs())
+
+            panel_text = get_admin_panel(users, 0, queued, paused)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"), InlineKeyboardButton("🧹 Clear Queue", callback_data="admin_clear")],
+                [InlineKeyboardButton("▶️ Resume", callback_data="admin_resume"), InlineKeyboardButton("⛔ Pause", callback_data="admin_pause")]
+            ])
+            await callback_query.edit_message_text(panel_text, reply_markup=keyboard)
+        except Exception as e:
+            await callback_query.answer(f"Error: {e}")
+
+
+    @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser", "reset", "ytdlp_bs"]))
     async def handle_message(client: Client, message: Message):
         user_id = message.from_user.id
+        await track_user(user_id)
         try:
             if not await is_user_allowed(user_id):
                 await message.reply_text("🚫 You are not allowed to use this bot.")
@@ -155,6 +222,13 @@ def register_handlers(app: Client):
             logger.error(f"Redis error checking whitelist for {user_id}: {e}")
             await message.reply_text("❌ A database connection error occurred.")
             return
+
+        try:
+            if await is_bot_paused() and user_id != int(os.environ.get('ADMIN_USER_ID', 0)):
+                await message.reply_text("⛔ The node is currently paused for maintenance.")
+                return
+        except:
+            pass
 
         text = message.text
 
@@ -253,6 +327,7 @@ def register_handlers(app: Client):
     async def button_callback(client: Client, callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
 
+        await track_user(user_id)
         try:
             if not await is_user_allowed(user_id):
                 await callback_query.answer("🚫 You are not allowed to use this bot.", show_alert=True)
