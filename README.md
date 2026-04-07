@@ -8,14 +8,14 @@ Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (u
 
 ## ✨ Features
 
-- 🔒 **Private Mode:** Lock the bot down so only you (and people you `/adduser`) can use it.
+- 🔒 **Private Mode & Admin Panel:** Secure the bot for your own use. Access an interactive Control Panel (`/ytdlp_bs`) to view live User Analytics, Active Jobs, Queue Size, and to seamlessly Pause/Resume operations globally.
 - 🚀 **Queue System (ARQ):** Downloads happen in the background. The bot never freezes!
-- 📊 **Beautiful Live UI:** Watch the download/upload speeds in real-time, see queue positions, view ETA, and monitor live Bot Server Stats (CPU/RAM).
+- 📊 **Beautiful Live UI:** Custom "Obsidian Media Node" branding dynamically renders detailed download/upload speeds, queue positions, precise ETA, and live Bot Server Stats (CPU/RAM).
 - 🛡️ **Anti-Bot Bypass:** Uses advanced `yt-dlp` settings to bypass YouTube's "Sign in to confirm you're not a bot" checks without requiring cookies.
 - 🔄 **Intelligent Fallbacks:** Automatically retries downloads using safe fallback formats if the preferred quality fails or encounters HTTP 403 errors.
 - 🎨 **Smart UI:** Video formats are sorted cleanly (e.g., `🎥 1080p`) with clear `🔊` (Audio) and `🔇` (Mute) indicators.
 - 🖼 **Video Previews:** Get thumbnail previews and duration before selecting the video format to download.
-- 🛑 **Cancel Anytime:** Made a mistake? Just click the inline ❌ Cancel button to stop your active download instantly.
+- 🛑 **Cancel Anytime:** Made a mistake? Just click the inline ❌ Cancel button to stop your active download instantly and exclusively (without affecting other users in the queue).
 - 🚦 **Anti-Spam & Limits:** Built-in rate limiting and disk-space checks keep your server safe.
 
 ---
@@ -153,6 +153,7 @@ If you continue to get these errors on every video, your server's IP address has
 
 **Admin Commands:**
 - `/adduser <telegram_id>`: Allow a friend to use the bot.
+- `/ytdlp_bs`: Open the interactive Admin Control Panel to view analytics (Total Users, Active Jobs, Queue Size) and globally Pause/Resume the bot.
 
 **User Commands:**
 - `/cancel`: Stop your active download/upload safely.
