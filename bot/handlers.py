@@ -679,8 +679,41 @@ def register_handlers(app: Client):
             logger.info(f"Upload starting for user {user_id}.")
             await set_job_status(job.job_id, user_id, "uploading")
 
+            # Fetch user settings to determine how to upload
+            from bot.user_settings import get_user_settings
+            settings = await get_user_settings(user_id)
+            send_as = settings.get("send_as", "media")
+            prefix = settings.get("prefix", "")
+            suffix = settings.get("suffix", "")
+            thumbnail = settings.get("thumbnail", None)
+
+            final_file_path = file_path
+
+            dir_name = os.path.dirname(file_path)
+            base_name = os.path.basename(file_path)
+            name, ext = os.path.splitext(base_name)
+
+            new_name = name
+
+            # Apply user custom rename if exists
+            if custom_name:
+                new_name = sanitize_filename(custom_name)
+
+            if prefix or suffix or custom_name:
+                if prefix:
+                    new_name = f"{prefix} {new_name}"
+                if suffix:
+                    new_name = f"{new_name} {suffix}"
+
+                new_path = os.path.join(dir_name, new_name + ext)
+                try:
+                    os.rename(file_path, new_path)
+                    final_file_path = new_path
+                except Exception:
+                    pass
+
             try:
-                file_size = os.path.getsize(file_path)
+                file_size = os.path.getsize(final_file_path)
             except:
                 file_size = 0
 
@@ -739,15 +772,52 @@ def register_handlers(app: Client):
                 except:
                     pass
 
-            await asyncio.wait_for(
-                client.send_document(
-                    chat_id=callback_query.message.chat.id,
-                    document=file_path,
-                    caption=f"🎬 **{title}**",
-                    progress=upload_progress
-                ),
-                timeout=600
-            )
+            # Send file based on type
+            if send_as == "document":
+                await asyncio.wait_for(
+                    client.send_document(
+                        chat_id=callback_query.message.chat.id,
+                        document=final_file_path,
+                        caption=f"🎬 **{title}**",
+                        thumb=thumbnail,
+                        progress=upload_progress
+                    ),
+                    timeout=600
+                )
+            else:
+                if final_file_path.endswith(".mp4") or final_file_path.endswith(".mkv") or final_file_path.endswith(".webm"):
+                    await asyncio.wait_for(
+                        client.send_video(
+                            chat_id=callback_query.message.chat.id,
+                            video=final_file_path,
+                            caption=f"🎬 **{title}**",
+                            thumb=thumbnail,
+                            progress=upload_progress
+                        ),
+                        timeout=600
+                    )
+                elif final_file_path.endswith(".mp3") or final_file_path.endswith(".m4a") or final_file_path.endswith(".wav"):
+                    await asyncio.wait_for(
+                        client.send_audio(
+                            chat_id=callback_query.message.chat.id,
+                            audio=final_file_path,
+                            caption=f"🎵 **{title}**",
+                            thumb=thumbnail,
+                            progress=upload_progress
+                        ),
+                        timeout=600
+                    )
+                else:
+                    await asyncio.wait_for(
+                        client.send_document(
+                            chat_id=callback_query.message.chat.id,
+                            document=final_file_path,
+                            caption=f"🎬 **{title}**",
+                            thumb=thumbnail,
+                            progress=upload_progress
+                        ),
+                        timeout=600
+                    )
 
             logger.info(f"Upload completed for user {user_id}.")
             total_time = int(time.time() - start_time)
