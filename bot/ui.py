@@ -189,3 +189,13 @@ def get_quality_settings_keyboard():
         [InlineKeyboardButton("⬅️ Back to Settings", callback_data="us_back")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+import re
+def sanitize_filename(name: str) -> str:
+    name = re.sub(r'[/\\:*?"<>|]', '', name)
+    return name[:60].strip()
+
+import re
+def sanitize_filename(name: str) -> str:
+    name = re.sub(r'[/\\:*?"<>|]', '', name)
+    return name[:60].strip()

@@ -11,7 +11,7 @@ from bot.user_settings import get_user_settings, update_user_settings, init_user
 from bot.ui import get_user_settings_panel, get_user_settings_keyboard, get_quality_settings_keyboard
 from bot.ui import (
     format_size, format_time, make_progress_bar, get_preview_message,
-    get_detailed_message, get_completion_summary, get_error_message, get_admin_panel
+    get_detailed_message, get_completion_summary, get_error_message, get_admin_panel, sanitize_filename
 )
 
 
@@ -301,6 +301,31 @@ def register_handlers(app: Client):
                 await redis_client.delete(f"state:{user_id}")
                 message.stop_propagation()
 
+        rename_state = await redis_client.get(f"state:rename:{user_id}")
+        if rename_state and message.text and not message.text.startswith("/"):
+            short_id = rename_state.decode("utf-8") if isinstance(rename_state, bytes) else str(rename_state)
+            await redis_client.delete(f"state:rename:{user_id}")
+
+            msg = await message.reply_text("⏳ Processing custom filename...")
+
+            class DummyQuery:
+                from_user = message.from_user
+                message = msg
+                data = "rename_exec"
+                async def answer(self, *args, **kwargs):
+                    pass
+                async def edit_message_text(self, *args, **kwargs):
+                    await self.message.edit_text(*args, **kwargs)
+
+            await button_callback(client, DummyQuery(), short_id, custom_name=message.text)
+            message.stop_propagation()
+        elif state in ["prefix", "suffix"]:
+            if message.text and not message.text.startswith("/"):
+                await update_user_settings(user_id, {state: message.text.strip()})
+                await message.reply_text(f"✅ {state.capitalize()} updated to: `{message.text.strip()}`")
+                await redis_client.delete(f"state:{user_id}")
+                message.stop_propagation()
+
     @app.on_message(filters.text & ~filters.command(["start", "cancel", "adduser", "reset", "ytdlp_bs", "ytdlp_us"]))
     async def handle_message(client: Client, message: Message):
         user_id = message.from_user.id
@@ -396,7 +421,7 @@ def register_handlers(app: Client):
                             await self.message.edit_text(*args, **kwargs)
 
                     await processing_msg.edit_text("⚡ Auto-Selected Format! Enqueueing...")
-                    await button_callback(client, DummyQuery())
+                    await button_callback(client, DummyQuery(), short_id, custom_name=None)
                     return
 
             keyboard = []
@@ -457,8 +482,33 @@ def register_handlers(app: Client):
         await callback_query.edit_message_text("❌ Operation cancelled.")
 
     @app.on_callback_query(filters.regex(r"^dl_"))
-    async def button_callback(client: Client, callback_query: CallbackQuery):
+    async def format_selected_callback(client: Client, callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
+        short_id = callback_query.data.split("_")[1]
+
+        await redis_client.setex(f"state:rename:{user_id}", 300, short_id)
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏭ Skip", callback_data=f"skiprename_{short_id}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_selection")]
+        ])
+        await callback_query.edit_message_text(
+            "✏️ **Enter a new filename** for this download.\n\n"
+            "Or tap **Skip** to keep the original name.\n"
+            "*(Timeout: 5 minutes)*",
+            reply_markup=keyboard
+        )
+
+    @app.on_callback_query(filters.regex(r"^skiprename_"))
+    async def skip_rename_callback(client: Client, callback_query: CallbackQuery):
+        user_id = callback_query.from_user.id
+        short_id = callback_query.data.split("_")[1]
+        await redis_client.delete(f"state:rename:{user_id}")
+        await button_callback(client, callback_query, short_id, custom_name=None)
+
+    async def button_callback(client: Client, callback_query, short_id: str, custom_name: str = None):
+        user_id = callback_query.from_user.id if hasattr(callback_query, "from_user") else callback_query.chat.id
+
 
         await track_user(user_id)
         try:
@@ -470,13 +520,7 @@ def register_handlers(app: Client):
             await callback_query.answer("❌ Database connection error.", show_alert=True)
             return
 
-        parts = callback_query.data.split("_")
 
-        if len(parts) < 2:
-            await callback_query.answer("Invalid request.", show_alert=True)
-            return
-
-        short_id = parts[1]
 
         try:
             format_data = await get_format_data(short_id)
