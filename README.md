@@ -10,6 +10,7 @@ Powered by **Pyrogram** and **Redis**, this bot supports massive file uploads (u
 
 - 🔒 **Private Mode & Admin Panel:** Secure the bot for your own use. Access an interactive Control Panel (`/ytdlp_bs`) to view live User Analytics, Active Jobs, Queue Size, and to seamlessly Pause/Resume operations globally.
 - ⚙️ **Personalized User Settings:** Every user can customize their experience (`/ytdlp_us`) by setting a default Download Quality, Media Type (Video/Document), Custom Prefix/Suffix for filenames, and a Custom Thumbnail!
+- 📝 **On-The-Fly Renaming:** Tap a video format, and the bot will instantly prompt you to enter a custom filename right in the chat (or skip it) before pushing the download to the worker queue.
 - ⭐ **Auto-Best Mode:** Users can toggle Auto-Best to entirely skip the format selection screen, making downloads instantly pipe to the background worker.
 - 🚀 **Queue System (ARQ):** Downloads happen in the background. The bot never freezes!
 - 📊 **Beautiful Live UI:** Custom "Obsidian Media Node" branding dynamically renders detailed download/upload speeds, queue positions, precise ETA, and live Bot Server Stats (CPU/RAM).

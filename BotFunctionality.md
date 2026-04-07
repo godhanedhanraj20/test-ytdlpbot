@@ -57,7 +57,21 @@ Select a format to download:
 * `[Audio 🎵 M4A – 2.0MB]`
 * `[❌ Cancel]`
 
-### Phase B: Live Progress UI
+### Phase B: On-The-Fly Renaming
+After clicking a format (unless `Auto Best` is ON), the bot suspends the download and prompts the user to either customize the final file name, or skip:
+```text
+✏️ **Enter a new filename** for this download.
+
+Or tap **Skip** to keep the original name.
+*(Timeout: 5 minutes)*
+```
+*Inline Buttons:*
+* `[⏭ Skip]`
+* `[❌ Cancel]`
+
+*If the user types "My Vacation Video" in the chat, the bot sanitizes the input and renames the file automatically before uploading it to Telegram.*
+
+### Phase C: Live Progress UI
 Once a format is selected, the bot initiates the ARQ worker queue and begins the download. The UI updates dynamically:
 ```text
 **SPIDER-MAN - Official Trailer**
@@ -76,7 +90,7 @@ Once a format is selected, the bot initiates the ARQ worker queue and begins the
 *Inline Buttons:*
 * `[❌ Cancel]`
 
-### Phase C: Completion
+### Phase D: Completion
 Upon successful upload to Telegram, the bot sends the video alongside a summary:
 ```text
 ✅ **Obsidian Node Complete**
@@ -148,6 +162,7 @@ The bot owner can monitor the node's health via `/ytdlp_bs`.
 ## 6. 🛡️ Architectural & Background Features
 
 These features operate invisibly to protect the user and the server:
+- **On-The-Fly Renaming:** Intercepts format selections dynamically, allowing users to rename files natively in the chat using a secure `sanitize_filename` helper before touching the filesystem.
 - **Intelligent Audio Merging:** If a user selects a Video-Only stream (like standard 1080p), the worker automatically fetches the highest-quality audio stream and merges them using `ffmpeg` before uploading.
 - **Anti-Bot Bypass:** Uses advanced `yt-dlp` heuristics (Node.js engine delegation) to bypass YouTube HTTP 403 blocks and Datacenter IP bans without requiring `oauth2` or cookies.
 - **Auto-Retry & Fallbacks:** If a specific format stream fails mid-download, the worker automatically re-attempts the download using the generic `best` format before throwing an error.
